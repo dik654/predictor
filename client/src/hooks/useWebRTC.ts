@@ -46,6 +46,29 @@ interface BatchForecast {
   current_memory: number;
 }
 
+interface ForecastEvaluation {
+  type: 'forecast_evaluation';
+  agent_id: string;
+  timestamp: string;
+  overall_severity: string;
+  model_ready: boolean;
+  data_source: string;
+  horizons: Array<{
+    horizon_min: number;
+    horizon_label: string;
+    pred_cpu: number;
+    pred_memory: number;
+    pred_disk_io: number;
+    ecod_score: number;
+    rule_score: number;
+    final_score: number;
+    reliability: number;
+    severity: string;
+    is_outlier: boolean;
+    prediction_interval?: Record<string, number>;
+  }>;
+}
+
 export function useWebRTC(config: WebRTCConfig) {
   const [connected, setConnected] = useState(false);
   const [mode, setMode] = useState<string>('unknown');
@@ -53,7 +76,8 @@ export function useWebRTC(config: WebRTCConfig) {
   const [anomalies, setAnomalies] = useState<AnomalyData[]>([]);
   const [healthScore, setHealthScore] = useState(100);
   const [batchForecast, setBatchForecast] = useState<BatchForecast | null>(null);
-  
+  const [forecastEvaluation, setForecastEvaluation] = useState<ForecastEvaluation | null>(null);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const metricsBufferRef = useRef<MetricsData[]>([]);
@@ -118,6 +142,12 @@ export function useWebRTC(config: WebRTCConfig) {
             setAnomalies([...anomaliesBufferRef.current]);
           } else if (data.health_score !== undefined) {
             setHealthScore(data.health_score);
+          }
+
+          // Handle forecast evaluation (embedded in anomaly result)
+          const evalData = (data as any).forecast_evaluation;
+          if (evalData && evalData.horizons?.length > 0) {
+            setForecastEvaluation(evalData as ForecastEvaluation);
           }
         }
       } catch (e) {
@@ -202,6 +232,7 @@ export function useWebRTC(config: WebRTCConfig) {
     anomalies,
     healthScore,
     batchForecast,
+    forecastEvaluation,
     connect,
     disconnect,
     sendMessage,

@@ -20,8 +20,9 @@ from statsforecast.models import AutoARIMA
 
 from .detector import EnhancedAnomalyDetector, AnomalyResult
 from . import influx_writer
-from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, update_forecast_actual
+from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, update_forecast_actual, write_forecast_evaluation
 from .predict_tracker import PredictTracker
+from .forecast_evaluator import ForecastEvaluator
 
 log = logging.getLogger("historical_gen")
 log.setLevel(logging.INFO)
@@ -190,31 +191,27 @@ class HistoricalDetector(EnhancedAnomalyDetector):
                 severity = "normal"
                 confidence = 1.0 - min(0.9, score)
 
-            # Build forecast horizon
-            forecast_horizon = []
-            warning_threshold = 80.0 if metric_name == "CPU" else 85.0
-            critical_threshold = 90.0 if metric_name == "CPU" else 95.0
+            # Build forecast horizon using multi-resolution
+            interval_sec = self.interval_min * 60
+            forecast_horizon = self._multi_resolution_forecast(
+                agent_id, metric_name, arr, interval_sec
+            )
 
-            for steps, minutes in zip(self.horizon_steps, self.config.horizons_min):
-                if steps <= len(all_forecasts):
-                    pred_value = float(all_forecasts[steps - 1])
-                else:
-                    # Extrapolate if needed
-                    pred_value = float(all_forecasts[-1])
+            if metric_name == "CPU":
+                warning_threshold, critical_threshold = 80.0, 90.0
+            elif metric_name == "Memory":
+                warning_threshold, critical_threshold = 85.0, 95.0
+            else:  # DiskIO
+                warning_threshold, critical_threshold = 70.0, 85.0
 
-                # Determine severity
+            for fh in forecast_horizon:
+                pred_value = fh["value"]
                 if pred_value >= critical_threshold:
-                    future_severity = "critical"
+                    fh["severity"] = "critical"
                 elif pred_value >= warning_threshold:
-                    future_severity = "warning"
+                    fh["severity"] = "warning"
                 else:
-                    future_severity = "normal"
-
-                forecast_horizon.append({
-                    "minutes": minutes,
-                    "value": pred_value,
-                    "severity": future_severity,
-                })
+                    fh["severity"] = "normal"
 
             return AnomalyResult(
                 engine="arima",
@@ -562,6 +559,9 @@ async def main(
         # PASS 2: Write metrics and forecasts to InfluxDB with fresh timestamps.
         log.info(f"Pass 2/2: Writing to InfluxDB...")
         total_forecasts = 0
+        total_evaluations = 0
+        fe = ForecastEvaluator()
+
         for i, (data_point, result) in enumerate(zip(data_points, detection_results)):
             # Write metrics
             try:
@@ -583,10 +583,14 @@ async def main(
             except Exception as e:
                 log.warning(f"Metrics write error for slot {i}: {e}")
 
-            # Write forecasts from stored detection results
+            # Write forecasts and forecast evaluations
             if result and i >= actual_warmup:
                 agent_id_val = data_point["AgentId"]
                 timestamp_val = data_point["Timestamp"]
+
+                # Collect ARIMA predictions per horizon for evaluation
+                forecasts_by_horizon: dict = {}
+
                 for detection in result.detections:
                     if detection.engine == "arima" and detection.forecast_horizon:
                         for horizon_info in detection.forecast_horizon:
@@ -604,6 +608,37 @@ async def main(
                                 total_forecasts += 1
                             except Exception as e:
                                 log.warning(f"Failed to write forecast: {e}")
+
+                            # Collect for forecast evaluation
+                            h_min = horizon_info["minutes"]
+                            if h_min not in forecasts_by_horizon:
+                                forecasts_by_horizon[h_min] = {}
+                            metric_key = detection.metric.lower()
+                            if metric_key == "diskio":
+                                metric_key = "disk_io"
+                            forecasts_by_horizon[h_min][metric_key] = horizon_info["value"]
+
+                # Run forecast evaluation and write to InfluxDB
+                if forecasts_by_horizon:
+                    fe.update_event(agent_id_val, data_point)
+                    fe.update_fallback_buffer(agent_id_val, data_point)
+                    eval_result = fe.evaluate(agent_id_val, timestamp_val, forecasts_by_horizon)
+                    eval_dict = fe.to_dict(eval_result)
+
+                    try:
+                        await write_forecast_evaluation(
+                            agent_id=agent_id_val,
+                            timestamp=timestamp_val,
+                            horizons=eval_dict.get("horizons", []),
+                            overall_severity=eval_dict.get("overall_severity", "normal"),
+                            model_ready=eval_dict.get("model_ready", False),
+                            data_source=eval_dict.get("data_source", "none"),
+                            bucket=config.bucket,
+                        )
+                        total_evaluations += 1
+                    except Exception as e:
+                        log.warning(f"Failed to write forecast evaluation: {e}")
+
                 # Fire-and-forget: don't await accuracy writes so they don't block the main loop
                 asyncio.create_task(tracker.compare_actual_async(
                     agent_id=agent_id_val,
@@ -613,7 +648,7 @@ async def main(
 
             if (i + 1) % max(1, config.total_slots // 10) == 0:
                 pct = (i + 1) * 100 // config.total_slots
-                log.info(f"  {i+1}/{config.total_slots} ({pct}%) — forecasts: {total_forecasts}")
+                log.info(f"  {i+1}/{config.total_slots} ({pct}%) — forecasts: {total_forecasts}, evaluations: {total_evaluations}")
                 await asyncio.sleep(0)  # yield to let pending accuracy tasks run
 
         # Wait for all pending accuracy writes to complete before closing connection
@@ -623,7 +658,7 @@ async def main(
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
-        log.info(f"✓ Complete! Total forecasts written: {total_forecasts}")
+        log.info(f"✓ Complete! Forecasts: {total_forecasts}, Evaluations: {total_evaluations}")
         log.info(f"  Data spans from {fresh_slots[0]} to {fresh_slots[-1]}")
 
     except Exception as e:

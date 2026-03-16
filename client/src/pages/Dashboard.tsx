@@ -1,64 +1,135 @@
-import { useEffect, useState } from 'react';
-import { useWebRTC } from '../hooks/useWebRTC';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { PeripheralCards } from '../components/PeripheralCards';
 import { StatusInsightCard } from '../components/StatusInsightCard';
+import { IncidentPrediction } from '../components/IncidentPrediction';
 
-function generateClientId(): string {
-  return `viewer-${Math.random().toString(36).substring(2, 8)}`;
+interface InfluxMetric {
+  timestamp: string;
+  agent_id: string;
+  cpu: number;
+  memory: number;
+  disk_io: number;
+  network_sent: number;
+  network_recv: number;
 }
 
+interface InfluxDetection {
+  timestamp: string;
+  engine: string;
+  metric: string;
+  value: number;
+  score: number;
+  threshold: number;
+  severity: string;
+  confidence: number;
+  forecast?: number;
+  residual?: number;
+  details?: string;
+}
+
+const POLL_INTERVAL = 5_000; // 5초마다 InfluxDB 폴링
+
 export function Dashboard() {
-  const [clientId] = useState(generateClientId);
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
-  
-  const {
-    connected,
-    mode,
-    metrics,
-    anomalies,
-    healthScore,
-    batchForecast,
-    connect,
-    disconnect,
-  } = useWebRTC({
-    serverUrl,
-    clientId,
-    role: 'viewer',
-  });
+
+  // InfluxDB에서 가져온 데이터
+  const [dbMetrics, setDbMetrics] = useState<InfluxMetric[]>([]);
+  const [dbDetections, setDbDetections] = useState<InfluxDetection[]>([]);
+  const [forecastEvaluation, setForecastEvaluation] = useState<any>(null);
+  const [healthScore, setHealthScore] = useState(100);
+  const [dbConnected, setDbConnected] = useState(false); // InfluxDB 데이터 수신 여부
+
+  // 이전 데이터 길이 추적 (불필요한 리렌더 방지)
+  const prevMetricsLen = useRef(0);
+  const prevDetectionsLen = useRef(0);
+
+  // InfluxDB에서 메트릭 조회
+  const fetchMetrics = useCallback(async () => {
+    try {
+      const resp = await fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=100`);
+      if (resp.ok) {
+        const data = await resp.json();
+        const metrics: InfluxMetric[] = data.metrics || [];
+        setDbConnected(metrics.length > 0);
+        if (metrics.length !== prevMetricsLen.current) {
+          prevMetricsLen.current = metrics.length;
+          setDbMetrics(metrics);
+        }
+      } else {
+        setDbConnected(false);
+      }
+    } catch {
+      setDbConnected(false);
+    }
+  }, [serverUrl]);
+
+  // InfluxDB에서 탐지 결과 조회
+  const fetchDetections = useCallback(async () => {
+    try {
+      const resp = await fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=200`);
+      if (resp.ok) {
+        const data = await resp.json();
+        const detections: InfluxDetection[] = data.detections || [];
+        if (detections.length !== prevDetectionsLen.current) {
+          prevDetectionsLen.current = detections.length;
+          setDbDetections(detections);
+
+          // healthScore 계산: 최근 탐지 결과 기반
+          let score = 100;
+          const recentDets = detections.slice(-20);
+          for (const d of recentDets) {
+            if (d.severity === 'critical') score -= Math.round(20 * d.confidence);
+            else if (d.severity === 'warning') score -= Math.round(10 * d.confidence);
+          }
+          setHealthScore(Math.max(0, Math.min(100, score)));
+        }
+      }
+    } catch { /* ignore */ }
+  }, [serverUrl]);
+
+  // Forecast evaluation 조회
+  const fetchEval = useCallback(async () => {
+    try {
+      const resp = await fetch(`${serverUrl}/api/forecast-evaluation?agent_id=V135-POS-03`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.horizons?.length > 0) setForecastEvaluation(data);
+      }
+    } catch { /* ignore */ }
+  }, [serverUrl]);
 
   useEffect(() => {
-    connect();
+    // 초기 로드
+    fetchMetrics();
+    fetchDetections();
+    fetchEval();
+    // 주기적 폴링
+    const metricsInterval = setInterval(fetchMetrics, POLL_INTERVAL);
+    const detectionsInterval = setInterval(fetchDetections, POLL_INTERVAL);
+    const evalInterval = setInterval(fetchEval, 30_000);
     return () => {
-      disconnect();
+      clearInterval(metricsInterval);
+      clearInterval(detectionsInterval);
+      clearInterval(evalInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Extract data by engine
-  const ecodData = anomalies
-    .flatMap(a => a.detections?.filter(d => d.engine === 'ecod') || [])
-    .slice(-100);
+  // InfluxDB 데이터에서 엔진별 분류
+  const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
+  const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
+  const peripheralAlerts = dbDetections.filter(d => d.engine === 'peripheral').slice(-20);
 
-  const arimaData = anomalies
-    .flatMap(a => a.detections?.filter(d => d.engine === 'arima') || [])
-    .slice(-50);
-
-  const peripheralAlerts = anomalies
-    .flatMap(a => a.detections?.filter(d => d.engine === 'peripheral') || [])
-    .slice(-20);
-
-  // Get CPU and Memory ARIMA data separately
+  // CPU/Memory ARIMA 분리
   const cpuArimaData = arimaData.filter(d => d.metric === 'CPU');
-  const memArimaData = arimaData.filter(d => d.metric === 'Memory');
-  
-  // Latest forecasts for heatmap
-  const latestCpuArima = cpuArimaData.length > 0 ? cpuArimaData[cpuArimaData.length - 1] : null;
-  const latestMemArima = memArimaData.length > 0 ? memArimaData[memArimaData.length - 1] : null;
+
+  // StatusInsightCard용 최근 탐지 결과
+  const latestDetections = dbDetections.slice(-10);
 
   // ECOD Multivariate Score Chart
   const ecodChartOption = {
-    title: { text: '🔍 ECOD 다변량 이상 점수', left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
+    title: { text: '🔍 ECOD 다변량 이상 점수 (InfluxDB)', left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
     tooltip: { trigger: 'axis' },
     legend: { bottom: 0, data: ['Multivariate', 'CPU', 'Memory', 'DiskIO'], textStyle: { color: '#94a3b8' } },
     grid: { left: '10%', right: '5%', top: '18%', bottom: '18%' },
@@ -98,9 +169,9 @@ export function Dashboard() {
     ],
   };
 
-  // ARIMA Forecast vs Actual Chart (simple version)
+  // ARIMA Forecast vs Actual Chart
   const arimaChartOption = {
-    title: { text: '📈 AutoARIMA 예측 vs 실제', left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
+    title: { text: '📈 AutoARIMA 예측 vs 실제 (InfluxDB)', left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
     tooltip: { trigger: 'axis' },
     legend: { bottom: 0, data: ['실제값', '예측값', '잔차'], textStyle: { color: '#94a3b8' } },
     grid: { left: '10%', right: '10%', top: '18%', bottom: '18%' },
@@ -130,7 +201,7 @@ export function Dashboard() {
         type: 'bar',
         yAxisIndex: 1,
         data: cpuArimaData.map(d => d.residual),
-        itemStyle: { 
+        itemStyle: {
           color: (params: any) => {
             const threshold = cpuArimaData[params.dataIndex]?.threshold || 1;
             return params.value > threshold ? '#ef4444' : '#64748b';
@@ -140,11 +211,8 @@ export function Dashboard() {
     ],
   };
 
-  // All detections for table (exclude ensemble)
-  const allDetections = anomalies
-    .flatMap(a => (a.detections || []).map(d => ({ ...d, timestamp: a.timestamp })))
-    .slice(-30)
-    .reverse();
+  // 탐지 히스토리 테이블 (최근 30건)
+  const allDetections = dbDetections.slice(-30).reverse();
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#e2e8f0', padding: '20px' }}>
@@ -161,50 +229,33 @@ export function Dashboard() {
         <div>
           <h1 style={{ margin: 0, fontSize: '24px' }}>🧠 PulseAI Lite v2.0</h1>
           <p style={{ margin: '4px 0 0', fontSize: '14px', color: '#94a3b8' }}>
-            다변량 ECOD 이상탐지 + AutoARIMA 미래예측
+            다변량 ECOD 이상탐지 + AutoARIMA 미래예측 (InfluxDB 기반)
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <span style={{
-            padding: '6px 12px',
-            borderRadius: '16px',
-            fontSize: '12px',
-            backgroundColor: mode === 'sample' ? '#1e3a5f' : '#14532d',
-            color: mode === 'sample' ? '#60a5fa' : '#4ade80',
-          }}>
-            {mode === 'sample' ? '📁 Sample' : '🔴 Live'}
-          </span>
-          {/* <div style={{
-            padding: '8px 16px',
-            borderRadius: '8px',
-            backgroundColor: healthScore >= 80 ? '#14532d' : healthScore >= 50 ? '#713f12' : '#7f1d1d',
-            fontSize: '18px',
-          }}>
-            {healthScore >= 80 ? '💚' : healthScore >= 50 ? '💛' : '❤️'}
-          </div> */}
-          <span style={{
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            color: connected ? '#4ade80' : '#f87171',
+            color: dbConnected ? '#4ade80' : '#f87171',
           }}>
             <span style={{
               width: '10px',
               height: '10px',
               borderRadius: '50%',
-              backgroundColor: connected ? '#4ade80' : '#f87171',
+              backgroundColor: dbConnected ? '#4ade80' : '#f87171',
             }} />
-            {connected ? 'Connected' : 'Disconnected'}
+            💾 InfluxDB {dbConnected ? `(${dbMetrics.length}건)` : 'No Data'}
           </span>
         </div>
       </header>
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
-        <StatCard title="수신 데이터" value={metrics.length} icon="📊" />
-        <StatCard title="ECOD 분석" value={ecodData.filter(d => d.metric === 'Multivariate').length} icon="🔍" color="#f43f5e" />
-        <StatCard title="ARIMA 예측" value={arimaData.length} icon="📈" color="#8b5cf6" />
-        <StatCard title="주변장치 경고" value={peripheralAlerts.length} icon="⚠️" color="#f59e0b" />
+        <StatCard title="수신 데이터 (DB)" value={dbMetrics.length} icon="📊" />
+        <StatCard title="ECOD 분석 (DB)" value={ecodData.filter(d => d.metric === 'Multivariate').length} icon="🔍" color="#f43f5e" />
+        <StatCard title="ARIMA 예측 (DB)" value={arimaData.length} icon="📈" color="#8b5cf6" />
+        <StatCard title="주변장치 경고 (DB)" value={peripheralAlerts.length} icon="⚠️" color="#f59e0b" />
       </div>
 
       {/* Charts Row 1 */}
@@ -212,9 +263,9 @@ export function Dashboard() {
         <div style={{ backgroundColor: '#1e293b', borderRadius: '12px', padding: '16px' }}>
           <ReactECharts option={ecodChartOption} style={{ height: '300px' }} />
         </div>
-        {/* Status Insight Card - 앙상블 게이지 대체 */}
-        <StatusInsightCard 
-          detections={anomalies.length > 0 ? anomalies[anomalies.length - 1].detections || [] : []}
+        {/* Status Insight Card */}
+        <StatusInsightCard
+          detections={latestDetections}
           healthScore={healthScore}
         />
       </div>
@@ -224,16 +275,26 @@ export function Dashboard() {
         <ReactECharts option={arimaChartOption} style={{ height: '280px' }} />
       </div>
 
-
       {/* Peripheral Status Cards */}
-      <PeripheralCards alerts={peripheralAlerts} />
+      <PeripheralCards alerts={peripheralAlerts.map(a => ({ ...a, details: a.details || '' }))} />
+
+      {/* Incident Prediction Section */}
+      <div style={{ marginBottom: '20px' }}>
+        <h3 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 600 }}>
+          사고 예측 분석
+        </h3>
+        <IncidentPrediction
+          evaluation={forecastEvaluation}
+          agentId={forecastEvaluation?.agent_id || (dbMetrics.length > 0 ? dbMetrics[dbMetrics.length - 1].agent_id : undefined)}
+        />
+      </div>
 
       {/* Detection Table */}
       <div style={{ backgroundColor: '#1e293b', borderRadius: '12px', padding: '16px' }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: '16px' }}>📋 탐지 히스토리</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: '16px' }}>📋 탐지 히스토리 (InfluxDB)</h3>
         {allDetections.length === 0 ? (
           <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
-            데이터 수집 중... (ECOD: 10초, ARIMA: 60초 주기)
+            InfluxDB에서 데이터 조회 중... (5초 주기 폴링)
           </p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -252,7 +313,9 @@ export function Dashboard() {
               <tbody>
                 {allDetections.map((d, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #1e293b' }}>
-                    <td style={{ padding: '8px 10px' }}>{d.timestamp?.split(' ')[1] || '-'}</td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : '-'}
+                    </td>
                     <td style={{ padding: '8px 10px' }}>
                       <EngineTag engine={d.engine} />
                     </td>
@@ -301,7 +364,7 @@ function EngineTag({ engine }: { engine: string }) {
     peripheral: { bg: '#713f12', text: '#fcd34d' },
   };
   const c = colors[engine] || { bg: '#374151', text: '#9ca3af' };
-  
+
   return (
     <span style={{
       padding: '2px 8px',
@@ -323,7 +386,7 @@ function SeverityTag({ severity }: { severity: string }) {
     normal: { bg: '#14532d', text: '#86efac', icon: '🟢' },
   };
   const s = styles[severity] || styles.normal;
-  
+
   return (
     <span style={{
       padding: '2px 8px',

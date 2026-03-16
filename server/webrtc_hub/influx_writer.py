@@ -514,6 +514,487 @@ def get_latest_accuracy(
         return {}
 
 
+def get_historical_metrics(
+    agent_id: str,
+    hours: int = 168,
+    resolution_minutes: int = 5,
+    bucket: str | None = None,
+) -> Optional[Dict]:
+    """
+    Query historical metrics from InfluxDB for long-term ECOD training.
+
+    Args:
+        agent_id: Agent identifier
+        hours: How many hours of history to fetch (default: 168 = 7 days)
+        resolution_minutes: Downsample resolution in minutes (default: 5)
+        bucket: InfluxDB bucket name
+
+    Returns:
+        Dict with 'cpu', 'memory', 'disk_io' numpy arrays, or None if unavailable
+    """
+    target_bucket = bucket if bucket is not None else INFLUX_BUCKET
+
+    if not client:
+        log.debug("InfluxDB not connected, cannot fetch historical metrics")
+        return None
+
+    try:
+        import numpy as np
+
+        query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -{hours}h)
+          |> filter(fn: (r) => r._measurement == "metrics")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io")
+          |> aggregateWindow(every: {resolution_minutes}m, fn: mean, createEmpty: false)
+          |> sort(columns: ["_time"], desc: false)
+        '''
+
+        query_api = client.query_api()
+        tables = query_api.query(query)
+
+        # Collect values by field
+        fields: Dict[str, list] = {"cpu": [], "memory": [], "disk_io": []}
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in fields and value is not None:
+                    fields[field].append(float(value))
+
+        # Ensure all fields have data and same length
+        min_len = min(len(v) for v in fields.values()) if all(fields.values()) else 0
+        if min_len < 20:
+            log.debug(f"Not enough historical data for {agent_id}: {min_len} points")
+            return None
+
+        result = {
+            "cpu": np.array(fields["cpu"][:min_len]),
+            "memory": np.array(fields["memory"][:min_len]),
+            "disk_io": np.array(fields["disk_io"][:min_len]),
+            "count": min_len,
+        }
+        log.info(f"Fetched {min_len} historical points for {agent_id} ({hours}h, {resolution_minutes}m resolution)")
+        return result
+
+    except Exception as e:
+        log.warning(f"Failed to fetch historical metrics for {agent_id}: {e}")
+        return None
+
+
+async def write_forecast_evaluation(
+    agent_id: str,
+    timestamp: str,
+    horizons: list,
+    overall_severity: str,
+    model_ready: bool,
+    data_source: str,
+    bucket: str = INFLUX_BUCKET,
+) -> bool:
+    """
+    Write forecast evaluation results to InfluxDB for persistence.
+    Each horizon is stored as a separate point.
+    """
+    global client, write_api
+
+    if not client or not write_api:
+        init_influx()
+        if not client or not write_api:
+            return False
+
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        try:
+            ts_dt = datetime.fromisoformat(ts_str)
+        except (ValueError, AttributeError):
+            ts_dt = datetime.utcnow()
+
+        points = []
+        for h in horizons:
+            point = Point("forecast_evaluation") \
+                .tag("agent_id", agent_id) \
+                .tag("horizon_min", str(h.get("horizon_min", 0))) \
+                .tag("severity", h.get("severity", "normal")) \
+                .tag("overall_severity", overall_severity) \
+                .field("pred_cpu", float(h.get("pred_cpu", 0))) \
+                .field("pred_memory", float(h.get("pred_memory", 0))) \
+                .field("pred_disk_io", float(h.get("pred_disk_io", 0))) \
+                .field("ecod_score", float(h.get("ecod_score", 0))) \
+                .field("rule_score", float(h.get("rule_score", 0))) \
+                .field("final_score", float(h.get("final_score", 0))) \
+                .field("reliability", float(h.get("reliability", 0))) \
+                .field("is_outlier", 1 if h.get("is_outlier") else 0) \
+                .field("model_ready", 1 if model_ready else 0) \
+                .field("data_source", data_source) \
+                .time(ts_dt)
+            points.append(point)
+
+        def _write():
+            for p in points:
+                line = p.to_line_protocol()
+                write_url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={bucket}"
+                req = urllib.request.Request(
+                    write_url,
+                    data=line.encode('utf-8'),
+                    headers={
+                        "Authorization": f"Token {INFLUX_TOKEN}",
+                        "Content-Type": "text/plain; charset=utf-8",
+                    },
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        if resp.status not in [200, 204]:
+                            return False
+                except urllib.error.HTTPError:
+                    return False
+            return True
+
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(loop.run_in_executor(_write_executor, _write), timeout=15.0)
+
+    except Exception as e:
+        if "shutdown" not in str(e).lower():
+            log.warning(f"Failed to write forecast evaluation: {e}")
+        return False
+
+
+def get_latest_forecast_evaluation(
+    agent_id: str,
+    bucket: str | None = None,
+) -> Optional[Dict]:
+    """
+    Query the latest forecast evaluation from InfluxDB.
+    Uses last() to get the most recent value per horizon per field.
+
+    Returns:
+        Dict matching ForecastEvaluation format, or None if unavailable
+    """
+    target_bucket = bucket if bucket is not None else INFLUX_BUCKET
+
+    if not client:
+        return None
+
+    try:
+        # Use last() to get only the most recent value per field per horizon
+        query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -24h)
+          |> filter(fn: (r) => r._measurement == "forecast_evaluation")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> last()
+        '''
+
+        query_api = client.query_api()
+        tables = query_api.query(query)
+
+        # Group by horizon_min
+        horizons_map: Dict[str, Dict] = {}
+        latest_time = None
+        overall_severity = "normal"
+
+        for table in tables:
+            for record in table.records:
+                h_min = record.values.get("horizon_min", "0")
+                field = record.get_field()
+                value = record.get_value()
+                ts = str(record.get_time())
+                sev = record.values.get("severity", "normal")
+                o_sev = record.values.get("overall_severity", "normal")
+
+                if latest_time is None or ts > latest_time:
+                    latest_time = ts
+                    overall_severity = o_sev
+
+                if h_min not in horizons_map:
+                    horizons_map[h_min] = {
+                        "horizon_min": int(h_min),
+                        "severity": sev,
+                    }
+
+                h = horizons_map[h_min]
+                if field == "pred_cpu" and value is not None:
+                    h["pred_cpu"] = float(value)
+                elif field == "pred_memory" and value is not None:
+                    h["pred_memory"] = float(value)
+                elif field == "pred_disk_io" and value is not None:
+                    h["pred_disk_io"] = float(value)
+                elif field == "ecod_score" and value is not None:
+                    h["ecod_score"] = float(value)
+                elif field == "rule_score" and value is not None:
+                    h["rule_score"] = float(value)
+                elif field == "final_score" and value is not None:
+                    h["final_score"] = float(value)
+                elif field == "reliability" and value is not None:
+                    h["reliability"] = float(value)
+                elif field == "is_outlier":
+                    h["is_outlier"] = bool(value)
+                elif field == "model_ready":
+                    h["model_ready"] = bool(value)
+                elif field == "data_source" and value is not None:
+                    h["data_source"] = str(value)
+
+        if not horizons_map:
+            return None
+
+        # Build labels
+        def _label(minutes: int) -> str:
+            if minutes < 60:
+                return f"{minutes}분 후"
+            elif minutes < 1440:
+                return f"{minutes // 60}시간 후"
+            return f"{minutes // 1440}일 후"
+
+        horizons = sorted(horizons_map.values(), key=lambda x: x.get("horizon_min", 0))
+        for h in horizons:
+            h["horizon_label"] = _label(h.get("horizon_min", 0))
+            h.setdefault("pred_cpu", 0)
+            h.setdefault("pred_memory", 0)
+            h.setdefault("pred_disk_io", 0)
+            h.setdefault("ecod_score", 0)
+            h.setdefault("rule_score", 0)
+            h.setdefault("final_score", 0)
+            h.setdefault("reliability", 0.5)
+            h.setdefault("is_outlier", False)
+
+        model_ready = any(h.get("model_ready") for h in horizons)
+        data_source = next((h.get("data_source", "none") for h in horizons if h.get("data_source")), "none")
+
+        return {
+            "type": "forecast_evaluation",
+            "agent_id": agent_id,
+            "timestamp": latest_time or "",
+            "overall_severity": overall_severity,
+            "model_ready": model_ready,
+            "data_source": data_source,
+            "horizons": horizons,
+        }
+
+    except Exception as e:
+        log.warning(f"Failed to query forecast evaluation: {e}")
+        return None
+
+
+async def write_detection(
+    agent_id: str,
+    timestamp: str,
+    engine: str,
+    metric: str,
+    value: float,
+    score: float,
+    threshold: float,
+    severity: str,
+    confidence: float,
+    forecast: float | None = None,
+    residual: float | None = None,
+    details: str | None = None,
+    bucket: str = INFLUX_BUCKET,
+) -> bool:
+    """
+    Write a single anomaly detection result to InfluxDB.
+
+    Measurement: 'detection'
+    Tags: agent_id, engine, metric, severity
+    Fields: value, score, threshold, confidence, forecast, residual, details
+    """
+    global client, write_api
+
+    if not client or not write_api:
+        init_influx()
+        if not client or not write_api:
+            return False
+
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        try:
+            ts_dt = datetime.fromisoformat(ts_str)
+        except (ValueError, AttributeError):
+            ts_dt = datetime.utcnow()
+
+        point = Point("detection") \
+            .tag("agent_id", agent_id) \
+            .tag("engine", engine) \
+            .tag("metric", metric) \
+            .tag("severity", severity) \
+            .field("value", float(value)) \
+            .field("score", float(score)) \
+            .field("threshold", float(threshold)) \
+            .field("confidence", float(confidence))
+
+        if forecast is not None:
+            point.field("forecast", float(forecast))
+        if residual is not None:
+            point.field("residual", float(residual))
+        if details:
+            point.field("details", str(details))
+
+        point.time(ts_dt)
+
+        def _write():
+            line = point.to_line_protocol()
+            write_url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={bucket}"
+            req = urllib.request.Request(
+                write_url,
+                data=line.encode('utf-8'),
+                headers={
+                    "Authorization": f"Token {INFLUX_TOKEN}",
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status not in [200, 204]:
+                        return False
+            except urllib.error.HTTPError:
+                return False
+            return True
+
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(loop.run_in_executor(_write_executor, _write), timeout=10.0)
+
+    except Exception as e:
+        if "shutdown" not in str(e).lower():
+            log.warning(f"Failed to write detection: {e}")
+        return False
+
+
+def get_recent_metrics(
+    agent_id: str,
+    limit: int = 100,
+    bucket: str | None = None,
+) -> list:
+    """
+    Query recent raw metrics from InfluxDB.
+
+    Returns list of dicts with timestamp, cpu, memory, disk_io, network_sent, network_recv.
+    """
+    target_bucket = bucket if bucket is not None else INFLUX_BUCKET
+
+    if not client:
+        return []
+
+    try:
+        query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -24h)
+          |> filter(fn: (r) => r._measurement == "metrics")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
+              or r._field == "network_sent" or r._field == "network_recv")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: {limit})
+          |> sort(columns: ["_time"], desc: false)
+        '''
+
+        query_api = client.query_api()
+        tables = query_api.query(query)
+
+        records_map: dict = {}
+        for table in tables:
+            for record in table.records:
+                ts = str(record.get_time())
+                field = record.get_field()
+                value = record.get_value()
+
+                if ts not in records_map:
+                    records_map[ts] = {
+                        "timestamp": ts,
+                        "agent_id": agent_id,
+                        "cpu": 0, "memory": 0, "disk_io": 0,
+                        "network_sent": 0, "network_recv": 0,
+                    }
+
+                if field in ("cpu", "memory", "disk_io", "network_sent", "network_recv") and value is not None:
+                    records_map[ts][field] = float(value)
+
+        records = sorted(records_map.values(), key=lambda x: x["timestamp"])
+        log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records")
+        return records
+
+    except Exception as e:
+        log.warning(f"Failed to query recent metrics: {e}")
+        return []
+
+
+def get_recent_detections(
+    agent_id: str,
+    limit: int = 200,
+    bucket: str | None = None,
+) -> list:
+    """
+    Query recent anomaly detection results from InfluxDB.
+
+    Returns list of dicts with timestamp, engine, metric, value, score, threshold,
+    severity, confidence, forecast, residual, details.
+    """
+    target_bucket = bucket if bucket is not None else INFLUX_BUCKET
+
+    if not client:
+        return []
+
+    try:
+        query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -24h)
+          |> filter(fn: (r) => r._measurement == "detection")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: {limit})
+          |> sort(columns: ["_time"], desc: false)
+        '''
+
+        query_api = client.query_api()
+        tables = query_api.query(query)
+
+        # Group by (timestamp, engine, metric) to reassemble fields
+        records_map: dict = {}
+        for table in tables:
+            for record in table.records:
+                ts = str(record.get_time())
+                engine = record.values.get("engine", "")
+                metric = record.values.get("metric", "")
+                severity = record.values.get("severity", "normal")
+                field = record.get_field()
+                value = record.get_value()
+
+                key = f"{ts}|{engine}|{metric}"
+                if key not in records_map:
+                    records_map[key] = {
+                        "timestamp": ts,
+                        "engine": engine,
+                        "metric": metric,
+                        "severity": severity,
+                        "value": 0, "score": 0, "threshold": 0, "confidence": 0,
+                        "forecast": None, "residual": None, "details": None,
+                    }
+
+                rec = records_map[key]
+                if field == "value" and value is not None:
+                    rec["value"] = float(value)
+                elif field == "score" and value is not None:
+                    rec["score"] = float(value)
+                elif field == "threshold" and value is not None:
+                    rec["threshold"] = float(value)
+                elif field == "confidence" and value is not None:
+                    rec["confidence"] = float(value)
+                elif field == "forecast" and value is not None:
+                    rec["forecast"] = float(value)
+                elif field == "residual" and value is not None:
+                    rec["residual"] = float(value)
+                elif field == "details" and value is not None:
+                    rec["details"] = str(value)
+
+        records = sorted(records_map.values(), key=lambda x: x["timestamp"])
+        log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records")
+        return records
+
+    except Exception as e:
+        log.warning(f"Failed to query recent detections: {e}")
+        return []
+
+
 def close_influx():
     """Close InfluxDB connection and flush pending writes."""
     global client, _write_executor

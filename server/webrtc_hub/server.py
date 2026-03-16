@@ -23,6 +23,7 @@ from aiortc import (
 from .detector import detector, EnhancedAnomalyDetector
 from . import influx_writer
 from .predict_tracker import tracker
+from .forecast_evaluator import evaluator as forecast_evaluator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -191,7 +192,68 @@ def process_data(data: dict) -> dict:
             if count == 3 or count % 100 == 0:
                 log.info(f"PERIPHERAL {d.metric}: {d.details}")
     
-    return detector.to_dict(result)
+    # Run forecast evaluation: collect ARIMA predictions per horizon
+    # and evaluate them with long-term ECOD
+    forecasts_by_horizon: dict = {}
+    for d in result.detections:
+        if d.engine == "arima" and d.forecast_horizon:
+            for fh in d.forecast_horizon:
+                h_min = fh["minutes"]
+                if h_min not in forecasts_by_horizon:
+                    forecasts_by_horizon[h_min] = {}
+                metric_key = d.metric.lower()
+                if metric_key == "diskio":
+                    metric_key = "disk_io"
+                forecasts_by_horizon[h_min][metric_key] = fh["value"]
+
+    # Update event state and fallback buffer
+    forecast_evaluator.update_event(agent_id, data)
+    forecast_evaluator.update_fallback_buffer(agent_id, data)
+
+    # Evaluate forecasts
+    forecast_eval = None
+    if forecasts_by_horizon:
+        eval_result = forecast_evaluator.evaluate(agent_id, data.get("Timestamp", ""), forecasts_by_horizon)
+        forecast_eval = forecast_evaluator.to_dict(eval_result)
+        if eval_result.overall_severity != "normal":
+            log.info(f"FORECAST_EVAL {agent_id}: {eval_result.overall_severity} "
+                     f"(horizons: {[(h.horizon_min, h.severity, h.final_score) for h in eval_result.horizons]})")
+
+    result_dict = detector.to_dict(result)
+
+    # Persist all detection results (ECOD, ARIMA, ensemble) to InfluxDB
+    timestamp_str = data.get("Timestamp", "")
+    for d in result.detections:
+        asyncio.create_task(influx_writer.write_detection(
+            agent_id=agent_id,
+            timestamp=timestamp_str,
+            engine=d.engine,
+            metric=d.metric,
+            value=d.value,
+            score=d.score,
+            threshold=d.threshold,
+            severity=d.severity,
+            confidence=d.confidence,
+            forecast=d.forecast,
+            residual=float(d.residual) if d.residual is not None else None,
+            details=d.details,
+            bucket=influx_writer.INFLUX_BUCKET,
+        ))
+
+    if forecast_eval:
+        result_dict["forecast_evaluation"] = forecast_eval
+        # Persist to InfluxDB for API retrieval after refresh/restart
+        asyncio.create_task(influx_writer.write_forecast_evaluation(
+            agent_id=agent_id,
+            timestamp=timestamp_str,
+            horizons=forecast_eval.get("horizons", []),
+            overall_severity=forecast_eval.get("overall_severity", "normal"),
+            model_ready=forecast_eval.get("model_ready", False),
+            data_source=forecast_eval.get("data_source", "none"),
+            bucket=influx_writer.INFLUX_BUCKET,
+        ))
+
+    return result_dict
 
 
 
@@ -448,6 +510,59 @@ async def api_forecast_vs_actual(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def api_forecast_evaluation(request: web.Request) -> web.Response:
+    """
+    Get the latest forecast evaluation for an agent.
+    Called on page load to restore state after refresh/restart.
+    Query params: agent_id, bucket
+    """
+    agent_id = request.query.get("agent_id", "V135-POS-03")
+    bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+
+    try:
+        data = influx_writer.get_latest_forecast_evaluation(agent_id, bucket=bucket)
+        if data:
+            return web.json_response(data)
+        return web.json_response({"error": "No evaluation data found"}, status=404)
+    except Exception as e:
+        log.warning(f"Error querying forecast evaluation: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_recent_metrics(request: web.Request) -> web.Response:
+    """
+    Get recent raw metrics from InfluxDB.
+    Query params: agent_id, limit, bucket
+    """
+    agent_id = request.query.get("agent_id", "V135-POS-03")
+    limit = int(request.query.get("limit", "100"))
+    bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+
+    try:
+        data = influx_writer.get_recent_metrics(agent_id, limit=limit, bucket=bucket)
+        return web.json_response({"agent_id": agent_id, "metrics": data})
+    except Exception as e:
+        log.warning(f"Error querying recent metrics: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def api_recent_detections(request: web.Request) -> web.Response:
+    """
+    Get recent anomaly detection results from InfluxDB.
+    Query params: agent_id, limit, bucket
+    """
+    agent_id = request.query.get("agent_id", "V135-POS-03")
+    limit = int(request.query.get("limit", "200"))
+    bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+
+    try:
+        data = influx_writer.get_recent_detections(agent_id, limit=limit, bucket=bucket)
+        return web.json_response({"agent_id": agent_id, "detections": data})
+    except Exception as e:
+        log.warning(f"Error querying recent detections: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def on_shutdown(app: web.Application):
     coros = []
     for cid, pc in list(hub.pcs.items()):
@@ -466,6 +581,9 @@ def create_app() -> web.Application:
     app.router.add_post("/offer", offer)
     app.router.add_get("/api/accuracy", api_accuracy)
     app.router.add_get("/api/forecast-vs-actual", api_forecast_vs_actual)
+    app.router.add_get("/api/forecast-evaluation", api_forecast_evaluation)
+    app.router.add_get("/api/recent-metrics", api_recent_metrics)
+    app.router.add_get("/api/recent-detections", api_recent_detections)
     app.on_shutdown.append(on_shutdown)
 
     cors = aiohttp_cors.setup(

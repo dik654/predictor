@@ -266,6 +266,109 @@ class EnhancedAnomalyDetector:
 
         return float(np.median(intervals))
 
+    def _multi_resolution_forecast(
+        self, agent_id: str, metric_name: str, arr: np.ndarray, interval_sec: float
+    ) -> list:
+        """
+        Multi-resolution forecasting to avoid step explosion.
+
+        Short-term (1hr, 6hr): use 5-min resolution → max 72 steps
+        Long-term (12hr, 1day, 2day): use 1-hr resolution → max 48 steps
+
+        Returns list of {minutes, value} dicts.
+        """
+        # Resolution configs: (target_resolution_sec, horizons_minutes)
+        RESOLUTIONS = [
+            (300, [60, 360]),        # 5min resolution → 1hr(12 steps), 6hr(72 steps)
+            (3600, [720, 1440, 2880]),  # 1hr resolution → 12hr(12), 1day(24), 2day(48)
+        ]
+
+        results = []
+
+        for res_sec, horizons in RESOLUTIONS:
+            # Resample data if needed
+            if interval_sec < res_sec:
+                # Downsample: group every N points and take mean
+                factor = max(1, int(res_sec / interval_sec))
+                n_full = (len(arr) // factor) * factor
+                if n_full < MIN_SAMPLES_ARIMA * factor:
+                    # Not enough data for this resolution, use raw with capped steps
+                    resampled = arr
+                    actual_res = interval_sec
+                else:
+                    resampled = arr[-n_full:].reshape(-1, factor).mean(axis=1)
+                    actual_res = res_sec
+            else:
+                # Data is already coarser than target resolution
+                resampled = arr
+                actual_res = interval_sec
+
+            if len(resampled) < MIN_SAMPLES_ARIMA:
+                # Fallback: use last known value
+                for m in horizons:
+                    results.append({"minutes": m, "value": float(arr[-1])})
+                continue
+
+            try:
+                res_freq = f"{int(actual_res)}s"
+                res_df = pd.DataFrame({
+                    "unique_id": agent_id,
+                    "ds": pd.date_range(
+                        end=pd.Timestamp.now(), periods=len(resampled), freq=res_freq
+                    ),
+                    "y": resampled,
+                })
+
+                # Cache key includes resolution
+                cache_key = f"{metric_name}__{int(actual_res)}s"
+                cached_freq = self.arima_models[agent_id].get(f"{cache_key}__freq")
+                need_retrain = (
+                    cache_key not in self.arima_models[agent_id]
+                    or cached_freq != res_freq
+                    or len(resampled) % 100 == 0
+                )
+
+                if need_retrain:
+                    res_sf = StatsForecast(
+                        models=[AutoARIMA(season_length=min(ARIMA_SEASON_LENGTH, len(resampled) // 3))],
+                        freq=res_freq,
+                    )
+                    res_sf.fit(res_df)
+                    self.arima_models[agent_id][cache_key] = res_sf
+                    self.arima_models[agent_id][f"{cache_key}__freq"] = res_freq
+                    log.info(f"Multi-res ARIMA trained: {agent_id}/{metric_name} res={int(actual_res)}s")
+                else:
+                    res_sf = self.arima_models[agent_id][cache_key]
+                    res_sf.fit(res_df)
+
+                # Calculate max steps needed
+                max_steps = max(max(1, int(m * 60 / actual_res)) for m in horizons)
+                forecast_df = res_sf.predict(h=max_steps)
+                forecasts = forecast_df["AutoARIMA"].values
+
+                for m in horizons:
+                    steps = max(1, int(m * 60 / actual_res))
+                    idx = min(steps - 1, len(forecasts) - 1)
+                    pred = float(forecasts[idx])
+                    # Clamp to reasonable range
+                    pred = max(0, min(100, pred))
+                    res_label = f"{int(actual_res // 60)}분" if actual_res >= 60 else f"{int(actual_res)}초"
+                    results.append({
+                        "minutes": m,
+                        "value": pred,
+                        "resolution": res_label,
+                        "steps": steps,
+                    })
+
+            except Exception as e:
+                log.warning(f"Multi-res forecast failed ({int(actual_res)}s): {e}")
+                for m in horizons:
+                    results.append({"minutes": m, "value": float(arr[-1])})
+
+        # Sort by horizon
+        results.sort(key=lambda x: x["minutes"])
+        return results
+
     def _run_cached_arima(self, agent_id: str, metric_name: str, values: deque) -> Optional[AnomalyResult]:
         """Run AutoARIMA with model caching for faster predictions."""
         if len(values) < MIN_SAMPLES_ARIMA:
@@ -308,26 +411,19 @@ class EnhancedAnomalyDetector:
                 # Update with new data (partial fit simulation)
                 sf.fit(df)
 
-            # Multi-step forecast (1시간, 6시간, 12시간, 24시간, 48시간)
-            horizon_minutes = [60, 360, 720, 1440, 2880]  # 1시간, 6시간, 12시간, 1일, 2일
-            horizon_steps = [max(1, int(m * 60 / interval_sec)) for m in horizon_minutes]
-            max_h = max(horizon_steps)
-            
-            forecast_df = sf.predict(h=max_h)
-            all_forecasts = forecast_df["AutoARIMA"].values
-            
-            # Current (1-step) forecast for comparison
-            forecast_value = float(all_forecasts[0])
-            
+            # Current (1-step) forecast for residual analysis
+            forecast_1step = sf.predict(h=1)
+            forecast_value = float(forecast_1step["AutoARIMA"].values[0])
+
             # Calculate residual
             actual_value = float(arr[-1])
             residual = abs(actual_value - forecast_value)
-            
+
             # Track residuals for adaptive threshold
             if metric_name not in self.arima_residuals[agent_id]:
                 self.arima_residuals[agent_id][metric_name] = deque(maxlen=WINDOW_SIZE)
             self.arima_residuals[agent_id][metric_name].append(residual)
-            
+
             # Calculate adaptive threshold
             residual_history = np.array(self.arima_residuals[agent_id][metric_name])
             if len(residual_history) > 5:
@@ -335,10 +431,10 @@ class EnhancedAnomalyDetector:
                 threshold = max(threshold, 0.1)  # Minimum threshold
             else:
                 threshold = float(np.mean(residual_history) * 2) if len(residual_history) > 0 else 1.0
-            
+
             # Calculate normalized score
             score = residual / max(threshold, 0.01)
-            
+
             # Determine severity with confidence
             if residual > threshold * 1.5:
                 severity = "critical"
@@ -349,28 +445,26 @@ class EnhancedAnomalyDetector:
             else:
                 severity = "normal"
                 confidence = 1.0 - min(0.9, score)
-            
-            # Build multi-step forecast horizon
-            forecast_horizon = []
-            warning_threshold = 80.0 if metric_name == "CPU" else 85.0  # CPU 80%, Memory 85%
-            critical_threshold = 90.0 if metric_name == "CPU" else 95.0
-            
-            for steps, minutes in zip(horizon_steps, horizon_minutes):
-                pred_value = float(all_forecasts[steps - 1])
-                
-                # Determine future severity
+
+            # Build multi-step forecast horizon using multi-resolution
+            forecast_horizon = self._multi_resolution_forecast(
+                agent_id, metric_name, arr, interval_sec
+            )
+            if metric_name == "CPU":
+                warning_threshold, critical_threshold = 80.0, 90.0
+            elif metric_name == "Memory":
+                warning_threshold, critical_threshold = 85.0, 95.0
+            else:  # DiskIO
+                warning_threshold, critical_threshold = 70.0, 85.0
+
+            for fh in forecast_horizon:
+                pred_value = fh["value"]
                 if pred_value >= critical_threshold:
-                    future_severity = "critical"
+                    fh["severity"] = "critical"
                 elif pred_value >= warning_threshold:
-                    future_severity = "warning"
+                    fh["severity"] = "warning"
                 else:
-                    future_severity = "normal"
-                
-                forecast_horizon.append({
-                    "minutes": minutes,
-                    "value": pred_value,
-                    "severity": future_severity,
-                })
+                    fh["severity"] = "normal"
             
             return AnomalyResult(
                 engine="arima",
@@ -494,9 +588,9 @@ class EnhancedAnomalyDetector:
             ecod_results = self._run_multivariate_ecod(agent_id)
             detections.extend(ecod_results)
         
-        # 2. Cached AutoARIMA
+        # 2. Cached AutoARIMA (CPU, Memory, DiskIO)
         if run_arima:
-            for metric_name, values in [("CPU", buf.cpu), ("Memory", buf.memory)]:
+            for metric_name, values in [("CPU", buf.cpu), ("Memory", buf.memory), ("DiskIO", buf.disk_io)]:
                 result = self._run_cached_arima(agent_id, metric_name, values)
                 if result:
                     detections.append(result)

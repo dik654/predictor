@@ -6,6 +6,7 @@ import { DashboardImproved } from './pages/DashboardImproved';
 import { AccuracyDashboardImproved } from './pages/AccuracyDashboardImproved';
 import { PredictionComparisonImproved } from './pages/PredictionComparisonImproved';
 import { ExecutiveForecast } from './pages/ExecutiveForecast';
+import { IncidentPredictionPage } from './pages/IncidentPredictionPage';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
         <Route path="/accuracy-improved" element={<AccuracyDashboardImproved />} />
         <Route path="/prediction-improved" element={<PredictionComparisonImproved />} />
         <Route path="/executive-forecast" element={<ExecutiveForecast />} />
+        <Route path="/incident-prediction" element={<IncidentPredictionPage />} />
       </Routes>
     </BrowserRouter>
   );
@@ -125,7 +127,19 @@ function Navigation() {
           borderBottom: location.pathname === '/executive-forecast' ? '3px solid #e74c3c' : 'none',
         }}
       >
-        📊 경영진 보고서 (48시간 예측)
+        경영진 보고서 (48시간 예측)
+      </Link>
+      <Link
+        to="/incident-prediction"
+        style={{
+          color: location.pathname === '/incident-prediction' ? '#e74c3c' : '#ecf0f1',
+          textDecoration: 'none',
+          padding: '15px 0',
+          fontWeight: location.pathname === '/incident-prediction' ? 'bold' : 'normal',
+          borderBottom: location.pathname === '/incident-prediction' ? '3px solid #e74c3c' : 'none',
+        }}
+      >
+        사고 예측 분석
       </Link>
     </nav>
   );
