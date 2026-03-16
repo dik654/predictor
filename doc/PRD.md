@@ -1,0 +1,409 @@
+# PulseAI Lite - PRD (Product Requirements Document)
+
+**Version:** 1.0  
+**Last Updated:** 2026-02-20  
+**Author:** Hoseok & richbot
+
+---
+
+## 1. 개요 (Overview)
+
+### 1.1 제품명
+**PulseAI Lite** - WebRTC 기반 POS 예지 장애 탐지 시스템
+
+### 1.2 한 줄 요약
+> ECOD로 현재 이상을 감지하고, AutoARIMA로 미래 이상을 예측하는 경량 예지 정비 시스템
+
+### 1.3 목표
+- 편의점 POS 단말의 장애를 **10~30분 사전 탐지**
+- 메모리 누수, CPU 스파이크 등 **이상 징후 조기 경보**
+- **WebRTC DataChannel** 기반 실시간 양방향 통신
+
+---
+
+## 2. 문제 정의 (Problem)
+
+### 2.1 현재 상황
+편의점 POS 단말은 다음 시스템 지표를 지속 생성:
+- CPU 사용률
+- Memory 사용률
+- Disk I/O
+- Network TX/RX
+- Process 상태
+- 주변장치 연결 상태 (스캐너, 동글, 키보드 등)
+
+### 2.2 기존 방식의 한계
+| 장애 유형 | 기존 Threshold 방식 | 문제점 |
+|----------|-------------------|--------|
+| 갑작스러운 spike | 사후 감지 | 이미 장애 발생 |
+| 메모리 누수 | 탐지 불가 | 서서히 증가하는 패턴 |
+| 계절성 패턴 붕괴 | 오탐 다수 | 시간대별 정상 범위 다름 |
+| 복합 지표 이상 | 단일 지표만 감시 | 상관관계 파악 불가 |
+
+---
+
+## 3. 솔루션 (Solution)
+
+### 3.1 핵심 전략
+**Reactive + Predictive** 동시 수행
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    PulseAI Lite                         │
+├─────────────────────┬───────────────────────────────────┤
+│   ECOD (실시간)      │      AutoARIMA (예측)             │
+│   "지금 이상한가?"    │      "앞으로 이상해질까?"          │
+├─────────────────────┼───────────────────────────────────┤
+│ • 분포 기반 비지도    │ • 정상 패턴 학습                  │
+│ • 튜닝 거의 없음      │ • 미래 N-step 예측               │
+│ • 1차 이상 의심 탐지  │ • 잔차 기반 이상 판단             │
+└─────────────────────┴───────────────────────────────────┘
+```
+
+### 3.2 이상 판단 조건
+
+**ECOD:**
+- 최근 60~90분 정상 분포 기반
+- 상위 98 percentile 이상값 탐지
+- sustain 조건: 6/10 rule (10회 중 6회 이상)
+
+**AutoARIMA:**
+```
+|Actual - Forecast| > k × σ(residual)
+```
+- k = 2~3 (튜닝 가능)
+- 서서히 악화되는 메모리 누수 탐지 가능
+
+---
+
+## 4. 시스템 아키텍처 (Architecture)
+
+### 4.1 전체 구조
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         PulseAI Lite                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────┐     WebRTC      ┌─────────────────────────┐  │
+│   │   POS 단말   │ ──DataChannel──▶│      Python Hub         │  │
+│   │  (C# Agent)  │                 │  ┌─────────┬─────────┐  │  │
+│   └─────────────┘                 │  │  ECOD   │AutoARIMA│  │  │
+│         │                          │  └────┬────┴────┬────┘  │  │
+│    또는 │                          │       │         │       │  │
+│         ▼                          │       ▼         ▼       │  │
+│   ┌─────────────┐                 │  ┌─────────────────┐    │  │
+│   │ Sample File │ ──CLI 읽기──────▶│  │  Anomaly Store  │    │  │
+│   │(data_pos.txt)│                 │  └────────┬────────┘    │  │
+│   └─────────────┘                 │           │             │  │
+│                                    └───────────┼─────────────┘  │
+│                                                │                │
+│                                     WebRTC     │                │
+│                                    DataChannel │                │
+│                                                ▼                │
+│                                    ┌─────────────────────────┐  │
+│                                    │     React Client        │  │
+│                                    │  ┌─────────┬─────────┐  │  │
+│                                    │  │ Charts  │ Alerts  │  │  │
+│                                    │  └─────────┴─────────┘  │  │
+│                                    └─────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 컴포넌트 구성
+
+| 컴포넌트 | 위치 | 역할 | 기술 스택 |
+|---------|------|------|----------|
+| **server** | `/server` | WebRTC Hub + 이상 탐지 | Python, uv, aiortc, PyOD, StatsForecast |
+| **client** | `/client` | 결과 시각화 | React, Vite, Chart.js |
+| **webrtc_csharp_client** | `/webrtc_csharp_client` | POS 에이전트 | .NET, WebRTC |
+| **sample** | `/sample` | 테스트 데이터 | data_pos.txt (JSON Lines) |
+
+---
+
+## 5. 데이터 입력 모드 (Input Mode)
+
+### 5.1 모드 선택
+
+서버 실행 시 CLI 옵션으로 선택:
+
+```bash
+# 샘플 파일 모드 (개발/테스트용)
+uv run webrtc-hub --mode sample --file ../sample/data_pos.txt
+
+# 실시간 WebRTC 모드 (프로덕션)
+uv run webrtc-hub --mode live
+```
+
+### 5.2 모드별 동작
+
+| 모드 | 데이터 소스 | 속도 | 용도 |
+|------|------------|------|------|
+| `--mode sample` | data_pos.txt | 조절 가능 (--speed 옵션) | 개발, 테스트, 데모 |
+| `--mode live` | WebRTC DataChannel | 실시간 | 프로덕션 |
+
+### 5.3 샘플 모드 옵션
+
+```bash
+uv run webrtc-hub --mode sample \
+  --file ../sample/data_pos.txt \
+  --speed 1.0      # 1.0 = 실시간, 2.0 = 2배속, 0 = 최대 속도
+  --loop           # 파일 끝나면 처음부터 반복
+```
+
+---
+
+## 6. 데이터 스키마 (Data Schema)
+
+### 6.1 POS 메트릭 (입력)
+
+```json
+{
+  "AgentId": "V135-POS-03",
+  "Timestamp": "2025-12-11 15:05:26",
+  "StoreInfo": {
+    "StoreCode": "V135",
+    "StoreName": "GS25역삼홍인점",
+    "ZipCode": "06136",
+    "Address": "서울 강남구 봉은사로30길 43, 지하1층",
+    "RegionCode": "16",
+    "RegionName": "2부문",
+    "PosNo": "3"
+  },
+  "CPU": 16.1,
+  "Memory": 62.78,
+  "DiskIO": 0.21,
+  "Network": {
+    "Sent": 176557,
+    "Recv": 8932
+  },
+  "Process": {
+    "GSRTL.CVS.POS.Shell": "RUNNING"
+  },
+  "Logs": [
+    {
+      "Method": "ProcessPoscheckRun",
+      "BodyType": "주변장치 체크",
+      "KeyValues": {
+        "동글이": "연결",
+        "스캐너-핸드스캐너": "연결",
+        "스캐너-2D스캐너": "실패"
+      }
+    }
+  ]
+}
+```
+
+### 6.2 이상 탐지 결과 (출력)
+
+```json
+{
+  "type": "anomaly",
+  "agent_id": "V135-POS-03",
+  "timestamp": "2025-12-11 15:05:26",
+  "detections": [
+    {
+      "engine": "ecod",
+      "metric": "CPU",
+      "value": 85.3,
+      "score": 0.98,
+      "threshold": 0.95,
+      "severity": "warning"
+    },
+    {
+      "engine": "arima",
+      "metric": "Memory",
+      "actual": 78.5,
+      "forecast": 65.2,
+      "residual": 13.3,
+      "severity": "critical"
+    }
+  ],
+  "health_score": 62
+}
+```
+
+---
+
+## 7. 주요 기능 (Features)
+
+### 7.1 Phase 1 - MVP (현재)
+
+| 기능 | 상태 | 설명 |
+|------|------|------|
+| WebRTC Hub | ✅ 완료 | 다중 클라이언트 연결, 메시지 라우팅 |
+| Sample 모드 | 🔲 TODO | txt 파일에서 데이터 읽기 |
+| ECOD 탐지 | 🔲 TODO | 실시간 분포 기반 이상 감지 |
+| AutoARIMA 예측 | 🔲 TODO | 시계열 예측 + 잔차 분석 |
+| React 차트 | 🔲 TODO | CPU/Memory/Disk 실시간 시각화 |
+
+### 7.2 Phase 2 - Enhancement
+
+| 기능 | 설명 |
+|------|------|
+| 점포별 대시보드 | 여러 POS 한눈에 보기 |
+| 알림 시스템 | Slack/Telegram 연동 |
+| Health Score | 종합 건강 점수 산출 |
+| 히스토리 조회 | 과거 이상 이벤트 검색 |
+
+---
+
+## 8. API 엔드포인트
+
+### 8.1 REST API (기존)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| POST | `/offer` | WebRTC SDP offer 처리 |
+| GET | `/who` | 연결된 클라이언트 목록 |
+| GET | `/health` | 서버 상태 확인 |
+
+### 8.2 WebRTC DataChannel 프로토콜 (기존)
+
+| Type | 방향 | 설명 |
+|------|------|------|
+| `hello` | C→S | 클라이언트 등록 |
+| `join` | C→S | 룸 입장 |
+| `data` | C→S | POS 메트릭 전송 |
+| `broadcast` | C→S | 룸 전체 메시지 |
+| `relay` | S→C | 메시지 전달 |
+
+### 8.3 WebRTC DataChannel 프로토콜 (신규)
+
+| Type | 방향 | 설명 |
+|------|------|------|
+| `anomaly` | S→C | 이상 탐지 결과 |
+| `metrics` | S→C | 실시간 메트릭 (차트용) |
+| `health` | S→C | 건강 점수 |
+
+---
+
+## 9. 기술 스택
+
+### 9.1 Server
+
+| 영역 | 기술 |
+|------|------|
+| Runtime | Python 3.11+ |
+| Package Manager | uv |
+| Web Framework | aiohttp |
+| WebRTC | aiortc |
+| 이상 탐지 | PyOD (ECOD) |
+| 시계열 예측 | StatsForecast (AutoARIMA) |
+| 데이터 처리 | pandas, numpy |
+
+### 9.2 Client
+
+| 영역 | 기술 |
+|------|------|
+| Framework | React 18 |
+| Build | Vite |
+| 차트 | Chart.js / Recharts |
+| 상태관리 | Zustand |
+| 스타일 | TailwindCSS |
+
+### 9.3 POS Agent (C#)
+
+| 영역 | 기술 |
+|------|------|
+| Runtime | .NET 8 |
+| WebRTC | SIPSorcery |
+
+---
+
+## 10. 디렉토리 구조
+
+```
+webrtc-hub-uv-sample/
+├── doc/
+│   ├── PRD.md              # 이 문서
+│   ├── Architecture.md     # 아키텍처 상세
+│   └── PulseAIBackend.md   # 알고리즘 설명
+├── server/
+│   ├── pyproject.toml
+│   └── webrtc_hub/
+│       ├── __init__.py
+│       ├── server.py       # WebRTC Hub
+│       ├── detector.py     # ECOD + ARIMA (TODO)
+│       └── sample_loader.py # 샘플 파일 로더 (TODO)
+├── client/
+│   ├── package.json
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── components/
+│   │   │   ├── Chart.tsx   # 실시간 차트 (TODO)
+│   │   │   └── Alert.tsx   # 이상 알림 (TODO)
+│   │   └── hooks/
+│   │       └── useWebRTC.ts
+│   └── index.html
+├── webrtc_csharp_client/
+│   └── (기존 C# 클라이언트)
+└── sample/
+    └── data_pos.txt        # 테스트 데이터 (6.8MB)
+```
+
+---
+
+## 11. 실행 방법
+
+### 11.1 개발 환경 (Sample 모드)
+
+```bash
+# 1. 서버 실행 (샘플 모드)
+cd server
+uv venv && uv sync
+uv run webrtc-hub --mode sample --file ../sample/data_pos.txt
+
+# 2. 클라이언트 실행
+cd client
+npm install
+npm run dev
+
+# 3. 브라우저에서 http://localhost:5173 접속
+```
+
+### 11.2 프로덕션 (Live 모드)
+
+```bash
+# 1. 서버 실행 (WebRTC 모드)
+uv run webrtc-hub --mode live
+
+# 2. POS 에이전트 실행
+cd webrtc_csharp_client
+dotnet run -- http://127.0.0.1:8080 V135-POS-03 pos
+
+# 3. 클라이언트 실행
+cd client && npm run dev
+```
+
+---
+
+## 12. 성공 지표 (Success Metrics)
+
+| 지표 | 목표 |
+|------|------|
+| 장애 사전 탐지율 | > 80% |
+| 오탐률 (False Positive) | < 5% |
+| 탐지 → 알림 지연 | < 10초 |
+| 시스템 리소스 | CPU < 20%, Memory < 500MB |
+
+---
+
+## 13. 향후 로드맵
+
+| Phase | 기간 | 목표 |
+|-------|------|------|
+| Phase 1 | 2주 | MVP - 샘플 모드 + 기본 차트 |
+| Phase 2 | 2주 | ECOD + AutoARIMA 통합 |
+| Phase 3 | 2주 | 다중 POS 대시보드 |
+| Phase 4 | 2주 | 알림 시스템 + Health Score |
+
+---
+
+## 14. 참고 문서
+
+- [PulseAI Backend 알고리즘](./PulseAIBackend.md)
+- [Architecture 상세](./Architecture.md)
+- [PyOD ECOD](https://pyod.readthedocs.io/en/latest/pyod.models.html#module-pyod.models.ecod)
+- [StatsForecast AutoARIMA](https://nixtla.github.io/statsforecast/)

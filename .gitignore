@@ -1,0 +1,12 @@
+influxdb_data/
+__pycache__/
+.pytest_cache/
+*.pyc
+logs/
+.webrtc-hub.pids
+node_modules/
+bin/
+obj/
+*.dll
+*.pdb
+*.cache
