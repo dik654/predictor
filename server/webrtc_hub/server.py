@@ -119,9 +119,10 @@ hub = Hub()
 
 
 def make_pc() -> RTCPeerConnection:
-    # 같은 LAN에서는 STUN 불필요, host candidate만으로 충분
-    # STUN 추가 시 ICE gathering에 5초+ 지연 발생
-    config = RTCConfiguration(iceServers=[])
+    config = RTCConfiguration(iceServers=[
+        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+        RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+    ])
     return RTCPeerConnection(configuration=config)
 
 
@@ -385,14 +386,6 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
 
 
 async def offer(request: web.Request) -> web.Response:
-    try:
-        return await _handle_offer(request)
-    except Exception as e:
-        log.exception("offer handler error: %s", e)
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def _handle_offer(request: web.Request) -> web.Response:
     client_id = request.query.get("client_id")
     role = request.query.get("role", "unknown")
     if not client_id:
@@ -404,10 +397,7 @@ async def _handle_offer(request: web.Request) -> web.Response:
 
     if client_id in hub.pcs:
         log.info("Replacing existing connection for client_id=%s", client_id)
-        old_pc = hub.pcs.pop(client_id, None)
-        hub.channels.pop(client_id, None)
-        if old_pc:
-            asyncio.create_task(old_pc.close())
+        hub.disconnect(client_id)
 
     pc = make_pc()
     hub.pcs[client_id] = pc
@@ -416,108 +406,43 @@ async def _handle_offer(request: web.Request) -> web.Response:
 
     log.info("New PeerConnection client_id=%s role=%s (total=%d)", client_id, role, len(hub.pcs))
 
-    @pc.on("iceconnectionstatechange")
-    async def on_iceconnectionstatechange():
-        if hub.pcs.get(client_id) is not pc:
-            return
-        log.info("client_id=%s iceConnectionState=%s", client_id, pc.iceConnectionState)
-
-    @pc.on("icegatheringstatechange")
-    async def on_icegatheringstatechange():
-        if hub.pcs.get(client_id) is not pc:
-            return
-        log.info("client_id=%s iceGatheringState=%s", client_id, pc.iceGatheringState)
-
-    def _setup_channel(channel, label_info=""):
-        """DataChannel 공통 핸들러 등록 (client-created / server-created 모두 사용)"""
+    @pc.on("datachannel")
+    def on_datachannel(channel):
         hub.channels[client_id] = channel
-        log.info("DataChannel ready: client_id=%s label=%s readyState=%s (%s)",
-                 client_id, channel.label, channel.readyState, label_info)
+        log.info("DataChannel open: client_id=%s label=%s", client_id, channel.label)
+
+        # Send welcome message (smarthug 원본과 동일)
+        welcome_msg = {"type": "welcome", "client_id": client_id}
+        channel.send(json.dumps(welcome_msg, ensure_ascii=False))
 
         # Auto-join the "pulseai" room for broadcasts
         hub._add_to_room(client_id, "pulseai")
 
-        # welcome을 보내지 않음 — Agent가 먼저 보낼 때까지 대기
-        # Agent의 첫 메시지 수신 시 welcome_ack 응답
-
-    @pc.on("datachannel")
-    def on_datachannel(channel):
-        _setup_channel(channel, label_info="client-created")
-
-        @channel.on("close")
-        def on_close():
-            log.warning("DataChannel CLOSED: client_id=%s (client-created)", client_id)
-
         @channel.on("message")
         def on_message(message):
+            # RAW 로깅
             raw = message if isinstance(message, str) else repr(message[:200])
-            log.info("RAW from %s (client-dc): %s", client_id, raw[:1000])
+            log.info("RAW from %s: %s", client_id, raw[:500])
+
             try:
                 data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
             except Exception:
                 data = {"type": "text", "payload": str(message)}
+
             _handle_data_message(client_id, st, channel, data)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log.info("client_id=%s connectionState=%s", client_id, pc.connectionState)
-        # 이미 교체된 이전 PC의 이벤트면 무시
-        if hub.pcs.get(client_id) is not pc:
-            log.info("Ignoring stale connectionstatechange for client_id=%s", client_id)
-            return
-        if pc.connectionState == "connected":
-            log.info("WebRTC CONNECTED: client_id=%s", client_id)
         if pc.connectionState in ("failed", "closed", "disconnected"):
-            log.warning("WebRTC LOST: client_id=%s state=%s", client_id, pc.connectionState)
             await pc.close()
             hub.disconnect(client_id)
-
-    # Agent SDP offer 전체 로깅
-    log.info("SDP OFFER from %s:\n%s", client_id, sdp)
-
-    # 서버에서도 DataChannel 생성 — Agent의 ondatachannel 이벤트 트리거
-    server_dc = pc.createDataChannel("pulseai")
-    log.info("Server-created DataChannel 'pulseai' for client_id=%s", client_id)
-
-    @server_dc.on("open")
-    def on_server_dc_open():
-        _setup_channel(server_dc, label_info="server-created")
-
-    @server_dc.on("close")
-    def on_server_dc_close():
-        log.warning("DataChannel CLOSED: client_id=%s (server-created)", client_id)
-
-    @server_dc.on("message")
-    def on_server_dc_message(message):
-        raw = message if isinstance(message, str) else repr(message[:200])
-        log.info("RAW from %s (server-dc): %s", client_id, raw[:1000])
-        # 기존 on_message 로직과 동일하게 처리
-        try:
-            data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
-        except Exception:
-            data = {"type": "text", "payload": str(message)}
-        _handle_data_message(client_id, st, server_dc, data)
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    # SDP answer에서 docker/불필요한 candidate 제거
-    answer_sdp = pc.localDescription.sdp
-    filtered_lines = []
-    for line in answer_sdp.splitlines():
-        # docker(172.x) 및 IPv6 candidate 제거 — Agent 서브넷만 남김
-        if line.startswith("a=candidate:"):
-            if "172.17." in line or "172.18." in line:
-                continue
-            if ":" in line.split(" ")[4]:  # IPv6 address
-                continue
-        filtered_lines.append(line)
-    filtered_sdp = "\n".join(filtered_lines)
-
-    log.info("SDP ANSWER to %s:\n%s", client_id, filtered_sdp)
-
-    return web.json_response({"sdp": filtered_sdp, "type": pc.localDescription.type})
+    return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
 
 
 async def who(request: web.Request) -> web.Response:
@@ -712,7 +637,7 @@ async def http_logger(request: web.Request, handler):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[http_logger])
+    app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_get("/who", who)
     app.router.add_post("/offer", offer)
