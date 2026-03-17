@@ -29,7 +29,7 @@ interface UseAccuracyDataResult {
   refetch: () => Promise<void>;
 }
 
-const API_BASE = `http://localhost:8080`;
+const API_BASE = `${window.location.protocol}//${window.location.hostname}:8080`;
 
 export function useAccuracyData(
   agentId: string = 'V135-POS-03',

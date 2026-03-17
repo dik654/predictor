@@ -119,12 +119,8 @@ hub = Hub()
 
 
 def make_pc() -> RTCPeerConnection:
-    config = RTCConfiguration(
-        iceServers=[
-            RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-            RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-        ]
-    )
+    # 내부 네트워크에서는 STUN 불필요 — host candidate만 사용
+    config = RTCConfiguration(iceServers=[])
     return RTCPeerConnection(configuration=config)
 
 

@@ -31,7 +31,7 @@ export function useForecastComparison(
       try {
         setLoading(true);
         const params = new URLSearchParams({ agent_id: agentId, metric, horizon_min: horizonMin, bucket });
-        const url = `http://localhost:8080/api/forecast-vs-actual?${params}`;
+        const url = `${window.location.protocol}//${window.location.hostname}:8080/api/forecast-vs-actual?${params}`;
         console.log('[useForecastComparison] Fetching from:', url);
 
         const response = await fetch(url);

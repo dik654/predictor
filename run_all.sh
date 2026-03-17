@@ -127,17 +127,85 @@ if [[ -n "$ONLY" ]]; then
 fi
 
 # ── docker compose 명령어 감지 ───────────────────────────────────────────────
-if docker compose version &>/dev/null 2>&1; then
+if docker compose version &>/dev/null; then
     DC="docker compose"
 elif command -v docker-compose &>/dev/null; then
     DC="docker-compose"
 else
-    DC="docker compose"  # 없으면 에러는 나중에 check_dep 에서 처리
+    DC=""  # 없으면 에러는 나중에 check_dep 에서 처리
 fi
+
+# ── 자동 설치 ────────────────────────────────────────────────────────────────
+install_uv() {
+    echo -e "${YELLOW}[INSTALL] uv not found. Installing...${NC}"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    command -v uv &>/dev/null || { echo -e "${RED}[ERROR] uv installation failed.${NC}"; return 1; }
+    echo -e "${GREEN}[INSTALL] uv installed successfully.${NC}"
+}
+
+install_docker() {
+    echo -e "${YELLOW}[INSTALL] docker not found. Installing...${NC}"
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq docker.io
+        sudo usermod -aG docker "$USER"
+        sudo systemctl start docker 2>/dev/null || sudo service docker start 2>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y docker
+        sudo systemctl start docker
+        sudo usermod -aG docker "$USER"
+    elif command -v brew &>/dev/null; then
+        echo -e "${RED}[ERROR] macOS: install Docker Desktop from https://docker.com/products/docker-desktop${NC}"
+        return 1
+    else
+        echo -e "${RED}[ERROR] Unsupported OS. Install docker manually.${NC}"
+        return 1
+    fi
+    command -v docker &>/dev/null || { echo -e "${RED}[ERROR] docker installation failed.${NC}"; return 1; }
+    echo -e "${GREEN}[INSTALL] docker installed successfully.${NC}"
+}
+
+install_npm() {
+    echo -e "${YELLOW}[INSTALL] npm not found. Installing via nvm...${NC}"
+    if ! command -v nvm &>/dev/null; then
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+    fi
+    nvm install --lts
+    command -v npm &>/dev/null || { echo -e "${RED}[ERROR] npm installation failed.${NC}"; return 1; }
+    echo -e "${GREEN}[INSTALL] npm (Node.js) installed successfully.${NC}"
+}
+
+install_dotnet() {
+    echo -e "${YELLOW}[INSTALL] dotnet not found. Installing...${NC}"
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq dotnet-sdk-8.0
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y dotnet-sdk-8.0
+    elif command -v brew &>/dev/null; then
+        brew install dotnet-sdk
+    else
+        echo -e "${RED}[ERROR] Unsupported OS. Install dotnet manually: https://dot.net/download${NC}"
+        return 1
+    fi
+    command -v dotnet &>/dev/null || { echo -e "${RED}[ERROR] dotnet installation failed.${NC}"; return 1; }
+    echo -e "${GREEN}[INSTALL] dotnet installed successfully.${NC}"
+}
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 check_dep() {
-    command -v "$1" &>/dev/null || { echo -e "${RED}[ERROR] '$1' not found.${NC}"; return 1; }
+    if command -v "$1" &>/dev/null; then
+        return 0
+    fi
+    # 자동 설치 시도
+    case "$1" in
+        uv)      install_uv ;;
+        docker)  install_docker ;;
+        npm)     install_npm ;;
+        dotnet)  install_dotnet ;;
+        *)       echo -e "${RED}[ERROR] '$1' not found. Please install manually.${NC}"; return 1 ;;
+    esac
 }
 
 pid_alive() {
@@ -230,6 +298,11 @@ do_start() {
     $RUN_CLIENT  && check_dep npm
     $RUN_POS_SIM && check_dep dotnet
     $RUN_INFLUX  && check_dep docker
+    if $RUN_INFLUX && [[ -z "$DC" ]]; then
+        echo -e "${RED}[ERROR] Neither 'docker compose' (V2 plugin) nor 'docker-compose' found.${NC}"
+        echo -e "${RED}        Install docker-compose-plugin or standalone docker-compose.${NC}"
+        exit 1
+    fi
 
     mkdir -p "$LOG_DIR"
     local TS
@@ -390,10 +463,14 @@ do_start() {
     fi
 
     # ── Summary ─────────────────────────────────────────────────────────────
+    local HOST_IP
+    HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$HOST_IP" ]] && HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "localhost")
+
     echo -e "${CYAN}============================================${NC}"
-    echo -e "  Server : ${GREEN}${SERVER_URL}${NC}"
-    $RUN_CLIENT && echo -e "  Client : ${BLUE}http://localhost:5173${NC}"
-    $RUN_INFLUX && echo -e "  Influx : ${MAGENTA}http://localhost:8086${NC}"
+    echo -e "  Server : ${GREEN}http://${HOST_IP}:${SERVER_PORT}${NC}"
+    $RUN_CLIENT && echo -e "  Client : ${BLUE}http://${HOST_IP}:5173${NC}"
+    $RUN_INFLUX && echo -e "  Influx : ${MAGENTA}http://${HOST_IP}:8086${NC}"
     echo -e "  Logs   : ${LOG_DIR}/"
     echo -e "${CYAN}============================================${NC}"
     echo ""
