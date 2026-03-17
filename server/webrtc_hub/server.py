@@ -411,8 +411,13 @@ async def offer(request: web.Request) -> web.Response:
         hub.channels[client_id] = channel
         log.info("DataChannel open: client_id=%s label=%s", client_id, channel.label)
 
-        # Send welcome message (smarthug 원본과 동일)
-        welcome_msg = {"type": "welcome", "client_id": client_id}
+        # Send welcome message (smarthug 원본과 동일한 구조)
+        welcome_msg = {
+            "type": "welcome",
+            "client_id": client_id,
+            "mode": "live",
+            "batch_forecast": None,
+        }
         channel.send(json.dumps(welcome_msg, ensure_ascii=False))
 
         # Auto-join the "pulseai" room for broadcasts
@@ -434,6 +439,8 @@ async def offer(request: web.Request) -> web.Response:
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log.info("client_id=%s connectionState=%s", client_id, pc.connectionState)
+        if hub.pcs.get(client_id) is not pc:
+            return
         if pc.connectionState in ("failed", "closed", "disconnected"):
             await pc.close()
             hub.disconnect(client_id)
