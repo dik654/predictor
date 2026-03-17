@@ -254,6 +254,136 @@ def process_data(data: dict) -> dict:
 
 
 
+def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
+    """DataChannel 메시지 공통 처리 (client-created / server-created 채널 모두 사용)"""
+    t = data.get("type")
+    log.info("MSG from %s: type=%s", client_id, t)
+
+    if t == "hello":
+        st.role = data.get("role", st.role)
+        channel.send(json.dumps({"type": "hello_ack", "role": st.role}, ensure_ascii=False))
+        return
+
+    if t == "join":
+        room = data.get("room")
+        if room:
+            hub._add_to_room(client_id, room)
+            channel.send(json.dumps({"type": "join_ack", "room": room}, ensure_ascii=False))
+        return
+
+    if t == "leave":
+        room = data.get("room")
+        if room and room in st.rooms:
+            st.rooms.discard(room)
+            members = hub.room_members.get(room)
+            if members:
+                members.discard(client_id)
+                if not members:
+                    hub.room_members.pop(room, None)
+            channel.send(json.dumps({"type": "leave_ack", "room": room}, ensure_ascii=False))
+        return
+
+    if t == "send":
+        to_id = data.get("to")
+        payload = data.get("payload")
+        if not to_id:
+            channel.send(json.dumps({"type": "error", "error": "missing to"}, ensure_ascii=False))
+            return
+        asyncio.create_task(hub.send_to(to_id, {"type": "relay", "from": client_id, "payload": payload}))
+        return
+
+    if t == "broadcast":
+        room = data.get("room")
+        payload = data.get("payload")
+        if not room:
+            channel.send(json.dumps({"type": "error", "error": "missing room"}, ensure_ascii=False))
+            return
+        asyncio.create_task(hub.broadcast_room(room, {"type": "relay", "from": client_id, "room": room, "payload": payload}, exclude=client_id))
+        return
+
+    if t == "ping":
+        channel.send(json.dumps({"type": "pong", "ts": data.get("ts")}, ensure_ascii=False))
+        return
+
+    if t == "data":
+        payload = data.get("payload", {})
+        agent_id = payload.get("AgentId")
+
+        if not agent_id:
+            channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+            return
+
+        for log_entry in payload.get("Logs", []):
+            if log_entry.get("BodyType") == "주변장치 체크":
+                peripherals = log_entry.get("KeyValues", {})
+                if peripherals:
+                    asyncio.create_task(influx_writer.write_peripheral_status(
+                        agent_id,
+                        payload.get("Timestamp", ""),
+                        peripherals,
+                        bucket=influx_writer.INFLUX_BUCKET,
+                    ))
+
+        if "CPU" not in payload:
+            channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+            return
+
+        result = process_data(payload)
+
+        asyncio.create_task(influx_writer.write_metrics(
+            agent_id,
+            payload.get("Timestamp"),
+            result.get("raw_metrics", {}),
+            bucket=influx_writer.INFLUX_BUCKET,
+            full_data=payload
+        ))
+
+        asyncio.create_task(tracker.compare_actual_async(
+            payload.get("AgentId"),
+            payload.get("Timestamp"),
+            result.get("raw_metrics", {})
+        ))
+
+        for det in result.get("detections", []):
+            if det.get("engine") == "arima" and det.get("forecast_horizon"):
+                for fh in det.get("forecast_horizon", []):
+                    asyncio.create_task(influx_writer.write_forecast(
+                        payload.get("AgentId"),
+                        payload.get("Timestamp"),
+                        det.get("metric"),
+                        fh.get("minutes"),
+                        fh.get("value"),
+                        bucket=influx_writer.INFLUX_BUCKET
+                    ))
+                    tracker.record(
+                        payload.get("AgentId"),
+                        det.get("metric"),
+                        payload.get("Timestamp"),
+                        fh.get("minutes"),
+                        fh.get("value")
+                    )
+
+        channel.send(json.dumps(result, ensure_ascii=False))
+        asyncio.create_task(hub.broadcast_room("pulseai", result, exclude=client_id))
+
+        metrics_msg = {
+            "type": "metrics",
+            "agent_id": payload.get("AgentId", "unknown"),
+            "timestamp": payload.get("Timestamp", ""),
+            "cpu": payload.get("CPU", 0),
+            "memory": payload.get("Memory", 0),
+            "disk_io": payload.get("DiskIO", 0),
+            "network": payload.get("Network", {}),
+        }
+        asyncio.create_task(hub.broadcast_room("pulseai", metrics_msg, exclude=client_id))
+
+        channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+        return
+
+    # Default: echo
+    channel.send(json.dumps({"type": "echo", "payload": data}, ensure_ascii=False))
+
+
 async def offer(request: web.Request) -> web.Response:
     try:
         return await _handle_offer(request)
@@ -298,186 +428,35 @@ async def _handle_offer(request: web.Request) -> web.Response:
             return
         log.info("client_id=%s iceGatheringState=%s", client_id, pc.iceGatheringState)
 
-    @pc.on("datachannel")
-    def on_datachannel(channel):
+    def _setup_channel(channel, label_info=""):
+        """DataChannel 공통 핸들러 등록 (client-created / server-created 모두 사용)"""
         hub.channels[client_id] = channel
-        log.info("DataChannel open: client_id=%s label=%s readyState=%s", client_id, channel.label, channel.readyState)
+        log.info("DataChannel ready: client_id=%s label=%s readyState=%s (%s)",
+                 client_id, channel.label, channel.readyState, label_info)
 
         # Auto-join the "pulseai" room for broadcasts
         hub._add_to_room(client_id, "pulseai")
 
-        # welcome + 주기적 keepalive ping
-        async def _channel_keepalive():
-            # welcome 약간 지연 전송
-            await asyncio.sleep(0.3)
-            try:
-                if channel.readyState == "open":
-                    channel.send(json.dumps({"type": "welcome", "client_id": client_id}, ensure_ascii=False))
-                    log.info("Welcome sent to client_id=%s", client_id)
-                else:
-                    log.warning("Channel closed before welcome: client_id=%s state=%s", client_id, channel.readyState)
-                    return
-            except Exception as e:
-                log.warning("Failed to send welcome to client_id=%s: %s", client_id, e)
-                return
+        # welcome을 보내지 않음 — Agent가 먼저 보낼 때까지 대기
+        # Agent의 첫 메시지 수신 시 welcome_ack 응답
 
-            # 3초마다 ping 전송 — 클라이언트 연결 유지
-            while True:
-                await asyncio.sleep(3)
-                if hub.pcs.get(client_id) is not pc:
-                    break
-                if channel.readyState != "open":
-                    break
-                try:
-                    channel.send(json.dumps({"type": "ping", "ts": int(time.time() * 1000)}, ensure_ascii=False))
-                except Exception:
-                    break
-        asyncio.ensure_future(_channel_keepalive())
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        _setup_channel(channel, label_info="client-created")
 
         @channel.on("close")
         def on_close():
-            log.warning("DataChannel CLOSED: client_id=%s", client_id)
+            log.warning("DataChannel CLOSED: client_id=%s (client-created)", client_id)
 
         @channel.on("message")
         def on_message(message):
-            # raw 메시지 전체 로깅 (최대 1000자)
             raw = message if isinstance(message, str) else repr(message[:200])
-            log.info("RAW from %s: %s", client_id, raw[:1000])
-
+            log.info("RAW from %s (client-dc): %s", client_id, raw[:1000])
             try:
                 data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
             except Exception:
                 data = {"type": "text", "payload": str(message)}
-
-            t = data.get("type")
-            log.info("MSG from %s: type=%s", client_id, t)
-            
-            if t == "hello":
-                st.role = data.get("role", st.role)
-                channel.send(json.dumps({"type": "hello_ack", "role": st.role}, ensure_ascii=False))
-                return
-
-            if t == "join":
-                room = data.get("room")
-                if room:
-                    hub._add_to_room(client_id, room)
-                    channel.send(json.dumps({"type": "join_ack", "room": room}, ensure_ascii=False))
-                return
-
-            if t == "leave":
-                room = data.get("room")
-                if room and room in st.rooms:
-                    st.rooms.discard(room)
-                    members = hub.room_members.get(room)
-                    if members:
-                        members.discard(client_id)
-                        if not members:
-                            hub.room_members.pop(room, None)
-                    channel.send(json.dumps({"type": "leave_ack", "room": room}, ensure_ascii=False))
-                return
-
-            if t == "send":
-                to_id = data.get("to")
-                payload = data.get("payload")
-                if not to_id:
-                    channel.send(json.dumps({"type": "error", "error": "missing to"}, ensure_ascii=False))
-                    return
-                asyncio.create_task(hub.send_to(to_id, {"type": "relay", "from": client_id, "payload": payload}))
-                return
-
-            if t == "broadcast":
-                room = data.get("room")
-                payload = data.get("payload")
-                if not room:
-                    channel.send(json.dumps({"type": "error", "error": "missing room"}, ensure_ascii=False))
-                    return
-                asyncio.create_task(hub.broadcast_room(room, {"type": "relay", "from": client_id, "room": room, "payload": payload}, exclude=client_id))
-                return
-
-            if t == "ping":
-                channel.send(json.dumps({"type": "pong", "ts": data.get("ts")}, ensure_ascii=False))
-                return
-
-            if t == "data":
-                payload = data.get("payload", {})
-                agent_id = payload.get("AgentId")
-
-                # AgentId가 없는 메시지는 무시 (C# heartbeat 등)
-                if not agent_id:
-                    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
-                    return
-
-                # 주변장치 상태 저장 (Logs 필드에 포함된 경우)
-                for log_entry in payload.get("Logs", []):
-                    if log_entry.get("BodyType") == "주변장치 체크":
-                        peripherals = log_entry.get("KeyValues", {})
-                        if peripherals:
-                            asyncio.create_task(influx_writer.write_peripheral_status(
-                                agent_id,
-                                payload.get("Timestamp", ""),
-                                peripherals,
-                                bucket=influx_writer.INFLUX_BUCKET,
-                            ))
-
-                # 메트릭 없는 로그 전용 레코드는 여기서 종료
-                if "CPU" not in payload:
-                    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
-                    return
-
-                result = process_data(payload)
-
-                asyncio.create_task(influx_writer.write_metrics(
-                    agent_id,
-                    payload.get("Timestamp"),
-                    result.get("raw_metrics", {}),
-                    bucket=influx_writer.INFLUX_BUCKET,
-                    full_data=payload
-                ))
-
-                asyncio.create_task(tracker.compare_actual_async(
-                    payload.get("AgentId"),
-                    payload.get("Timestamp"),
-                    result.get("raw_metrics", {})
-                ))
-
-                for det in result.get("detections", []):
-                    if det.get("engine") == "arima" and det.get("forecast_horizon"):
-                        for fh in det.get("forecast_horizon", []):
-                            asyncio.create_task(influx_writer.write_forecast(
-                                payload.get("AgentId"),
-                                payload.get("Timestamp"),
-                                det.get("metric"),
-                                fh.get("minutes"),
-                                fh.get("value"),
-                                bucket=influx_writer.INFLUX_BUCKET
-                            ))
-                            tracker.record(
-                                payload.get("AgentId"),
-                                det.get("metric"),
-                                payload.get("Timestamp"),
-                                fh.get("minutes"),
-                                fh.get("value")
-                            )
-
-                channel.send(json.dumps(result, ensure_ascii=False))
-                asyncio.create_task(hub.broadcast_room("pulseai", result, exclude=client_id))
-
-                metrics_msg = {
-                    "type": "metrics",
-                    "agent_id": payload.get("AgentId", "unknown"),
-                    "timestamp": payload.get("Timestamp", ""),
-                    "cpu": payload.get("CPU", 0),
-                    "memory": payload.get("Memory", 0),
-                    "disk_io": payload.get("DiskIO", 0),
-                    "network": payload.get("Network", {}),
-                }
-                asyncio.create_task(hub.broadcast_room("pulseai", metrics_msg, exclude=client_id))
-
-                channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
-                return
-
-            # Default: echo
-            channel.send(json.dumps({"type": "echo", "payload": data}, ensure_ascii=False))
+            _handle_data_message(client_id, st, channel, data)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -496,14 +475,49 @@ async def _handle_offer(request: web.Request) -> web.Response:
     # Agent SDP offer 전체 로깅
     log.info("SDP OFFER from %s:\n%s", client_id, sdp)
 
+    # 서버에서도 DataChannel 생성 — Agent의 ondatachannel 이벤트 트리거
+    server_dc = pc.createDataChannel("pulseai")
+    log.info("Server-created DataChannel 'pulseai' for client_id=%s", client_id)
+
+    @server_dc.on("open")
+    def on_server_dc_open():
+        _setup_channel(server_dc, label_info="server-created")
+
+    @server_dc.on("close")
+    def on_server_dc_close():
+        log.warning("DataChannel CLOSED: client_id=%s (server-created)", client_id)
+
+    @server_dc.on("message")
+    def on_server_dc_message(message):
+        raw = message if isinstance(message, str) else repr(message[:200])
+        log.info("RAW from %s (server-dc): %s", client_id, raw[:1000])
+        # 기존 on_message 로직과 동일하게 처리
+        try:
+            data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
+        except Exception:
+            data = {"type": "text", "payload": str(message)}
+        _handle_data_message(client_id, st, server_dc, data)
+
     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    # Agent SDP answer 전체 로깅
-    log.info("SDP ANSWER to %s:\n%s", client_id, pc.localDescription.sdp)
+    # SDP answer에서 docker/불필요한 candidate 제거
+    answer_sdp = pc.localDescription.sdp
+    filtered_lines = []
+    for line in answer_sdp.splitlines():
+        # docker(172.x) 및 IPv6 candidate 제거 — Agent 서브넷만 남김
+        if line.startswith("a=candidate:"):
+            if "172.17." in line or "172.18." in line:
+                continue
+            if ":" in line.split(" ")[4]:  # IPv6 address
+                continue
+        filtered_lines.append(line)
+    filtered_sdp = "\n".join(filtered_lines)
 
-    return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
+    log.info("SDP ANSWER to %s:\n%s", client_id, filtered_sdp)
+
+    return web.json_response({"sdp": filtered_sdp, "type": pc.localDescription.type})
 
 
 async def who(request: web.Request) -> web.Response:
