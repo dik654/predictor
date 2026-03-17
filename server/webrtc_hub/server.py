@@ -119,10 +119,8 @@ hub = Hub()
 
 
 def make_pc() -> RTCPeerConnection:
-    config = RTCConfiguration(iceServers=[
-        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-        RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-    ])
+    # 내부 네트워크 — host candidate만 사용
+    config = RTCConfiguration(iceServers=[])
     return RTCPeerConnection(configuration=config)
 
 
@@ -256,6 +254,14 @@ def process_data(data: dict) -> dict:
 
 
 async def offer(request: web.Request) -> web.Response:
+    try:
+        return await _handle_offer(request)
+    except Exception as e:
+        log.exception("offer handler error: %s", e)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def _handle_offer(request: web.Request) -> web.Response:
     client_id = request.query.get("client_id")
     role = request.query.get("role", "unknown")
     if not client_id:
