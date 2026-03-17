@@ -84,8 +84,12 @@ export function useWebRTC(config: WebRTCConfig) {
   const anomaliesBufferRef = useRef<AnomalyData[]>([]);
 
   const connect = useCallback(async () => {
-    // 내부 네트워크에서는 STUN 불필요 — host candidate만 사용
-    const pc = new RTCPeerConnection({ iceServers: [] });
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
     pcRef.current = pc;
 
     // Create data channel
