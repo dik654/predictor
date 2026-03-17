@@ -464,11 +464,12 @@ async def who(request: web.Request) -> web.Response:
     return web.json_response({
         "clients": online,
         "rooms": {k: sorted(list(v)) for k, v in hub.room_members.items()},
+        "mode": "live",
     })
 
 
 async def health(request: web.Request) -> web.Response:
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "mode": "live"})
 
 
 async def api_accuracy(request: web.Request) -> web.Response:
