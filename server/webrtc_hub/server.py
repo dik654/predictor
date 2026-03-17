@@ -493,11 +493,15 @@ async def _handle_offer(request: web.Request) -> web.Response:
             await pc.close()
             hub.disconnect(client_id)
 
-    log.info("Setting remote description for client_id=%s sdp_type=%s sdp_len=%d", client_id, type_, len(sdp))
+    # Agent SDP offer 전체 로깅
+    log.info("SDP OFFER from %s:\n%s", client_id, sdp)
+
     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-    log.info("Answer created for client_id=%s answer_sdp_len=%d", client_id, len(pc.localDescription.sdp))
+
+    # Agent SDP answer 전체 로깅
+    log.info("SDP ANSWER to %s:\n%s", client_id, pc.localDescription.sdp)
 
     return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
 
