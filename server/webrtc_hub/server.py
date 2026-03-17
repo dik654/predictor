@@ -276,6 +276,14 @@ async def offer(request: web.Request) -> web.Response:
 
     log.info("New PeerConnection client_id=%s role=%s (total=%d)", client_id, role, len(hub.pcs))
 
+    @pc.on("iceconnectionstatechange")
+    async def on_iceconnectionstatechange():
+        log.info("client_id=%s iceConnectionState=%s", client_id, pc.iceConnectionState)
+
+    @pc.on("icegatheringstatechange")
+    async def on_icegatheringstatechange():
+        log.info("client_id=%s iceGatheringState=%s", client_id, pc.iceGatheringState)
+
     @pc.on("datachannel")
     def on_datachannel(channel):
         hub.channels[client_id] = channel
@@ -295,6 +303,7 @@ async def offer(request: web.Request) -> web.Response:
                 data = {"type": "text", "payload": str(message)}
 
             t = data.get("type")
+            log.info("MSG from %s: type=%s (len=%d)", client_id, t, len(message) if isinstance(message, str) else 0)
             
             if t == "hello":
                 st.role = data.get("role", st.role)
@@ -426,13 +435,18 @@ async def offer(request: web.Request) -> web.Response:
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log.info("client_id=%s connectionState=%s", client_id, pc.connectionState)
+        if pc.connectionState == "connected":
+            log.info("WebRTC CONNECTED: client_id=%s", client_id)
         if pc.connectionState in ("failed", "closed", "disconnected"):
+            log.warning("WebRTC LOST: client_id=%s state=%s", client_id, pc.connectionState)
             await pc.close()
             hub.disconnect(client_id)
 
+    log.info("Setting remote description for client_id=%s sdp_type=%s sdp_len=%d", client_id, type_, len(sdp))
     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
+    log.info("Answer created for client_id=%s answer_sdp_len=%d", client_id, len(pc.localDescription.sdp))
 
     return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
 
