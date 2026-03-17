@@ -301,23 +301,41 @@ async def _handle_offer(request: web.Request) -> web.Response:
     @pc.on("datachannel")
     def on_datachannel(channel):
         hub.channels[client_id] = channel
-        log.info("DataChannel open: client_id=%s label=%s", client_id, channel.label)
+        log.info("DataChannel open: client_id=%s label=%s readyState=%s", client_id, channel.label, channel.readyState)
 
-        welcome_msg = {"type": "welcome", "client_id": client_id}
-        channel.send(json.dumps(welcome_msg, ensure_ascii=False))
-        
         # Auto-join the "pulseai" room for broadcasts
         hub._add_to_room(client_id, "pulseai")
 
+        # welcome 메시지를 약간 지연 전송 (일부 클라이언트가 즉시 수신 불가)
+        async def _send_welcome():
+            await asyncio.sleep(0.5)
+            try:
+                if channel.readyState == "open":
+                    channel.send(json.dumps({"type": "welcome", "client_id": client_id}, ensure_ascii=False))
+                    log.info("Welcome sent to client_id=%s", client_id)
+                else:
+                    log.warning("Channel closed before welcome: client_id=%s state=%s", client_id, channel.readyState)
+            except Exception as e:
+                log.warning("Failed to send welcome to client_id=%s: %s", client_id, e)
+        asyncio.ensure_future(_send_welcome())
+
+        @channel.on("close")
+        def on_close():
+            log.warning("DataChannel CLOSED: client_id=%s", client_id)
+
         @channel.on("message")
         def on_message(message):
+            # raw 메시지 전체 로깅 (최대 1000자)
+            raw = message if isinstance(message, str) else repr(message[:200])
+            log.info("RAW from %s: %s", client_id, raw[:1000])
+
             try:
                 data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
             except Exception:
                 data = {"type": "text", "payload": str(message)}
 
             t = data.get("type")
-            log.info("MSG from %s: type=%s (len=%d)", client_id, t, len(message) if isinstance(message, str) else 0)
+            log.info("MSG from %s: type=%s", client_id, t)
             
             if t == "hello":
                 st.role = data.get("role", st.role)
