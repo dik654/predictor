@@ -119,8 +119,9 @@ hub = Hub()
 
 
 def make_pc() -> RTCPeerConnection:
-    # 내부 네트워크 — host candidate만 사용
-    config = RTCConfiguration(iceServers=[])
+    config = RTCConfiguration(iceServers=[
+        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+    ])
     return RTCPeerConnection(configuration=config)
 
 
@@ -273,7 +274,10 @@ async def _handle_offer(request: web.Request) -> web.Response:
 
     if client_id in hub.pcs:
         log.info("Replacing existing connection for client_id=%s", client_id)
-        hub.disconnect(client_id)
+        old_pc = hub.pcs.pop(client_id, None)
+        hub.channels.pop(client_id, None)
+        if old_pc:
+            asyncio.create_task(old_pc.close())
 
     pc = make_pc()
     hub.pcs[client_id] = pc
@@ -284,10 +288,14 @@ async def _handle_offer(request: web.Request) -> web.Response:
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
+        if hub.pcs.get(client_id) is not pc:
+            return
         log.info("client_id=%s iceConnectionState=%s", client_id, pc.iceConnectionState)
 
     @pc.on("icegatheringstatechange")
     async def on_icegatheringstatechange():
+        if hub.pcs.get(client_id) is not pc:
+            return
         log.info("client_id=%s iceGatheringState=%s", client_id, pc.iceGatheringState)
 
     @pc.on("datachannel")
@@ -441,6 +449,10 @@ async def _handle_offer(request: web.Request) -> web.Response:
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log.info("client_id=%s connectionState=%s", client_id, pc.connectionState)
+        # 이미 교체된 이전 PC의 이벤트면 무시
+        if hub.pcs.get(client_id) is not pc:
+            log.info("Ignoring stale connectionstatechange for client_id=%s", client_id)
+            return
         if pc.connectionState == "connected":
             log.info("WebRTC CONNECTED: client_id=%s", client_id)
         if pc.connectionState in ("failed", "closed", "disconnected"):
