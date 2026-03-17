@@ -449,7 +449,23 @@ async def offer(request: web.Request) -> web.Response:
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
+    # Agent의 IP 서브넷에 맞는 candidate만 남기기
+    # nanocube-pico-1은 인터페이스가 많아서 SIPSorcery가 혼동할 수 있음
+    answer_sdp = pc.localDescription.sdp
+    agent_ip = request.remote or ""
+    # Agent가 10.145.165.x 대역이면 해당 서브넷 candidate만 남김
+    if agent_ip.startswith("10.145.165."):
+        filtered_lines = []
+        for line in answer_sdp.splitlines():
+            if line.startswith("a=candidate:"):
+                # 10.145.165.x candidate만 유지
+                if "10.145.165." not in line:
+                    continue
+            filtered_lines.append(line)
+        answer_sdp = "\n".join(filtered_lines)
+        log.info("Filtered SDP candidates to 10.145.165.x subnet for client_id=%s", client_id)
+
+    return web.json_response({"sdp": answer_sdp, "type": pc.localDescription.type})
 
 
 async def who(request: web.Request) -> web.Response:
