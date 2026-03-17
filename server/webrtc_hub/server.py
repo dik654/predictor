@@ -616,8 +616,40 @@ async def on_shutdown(app: web.Application):
     hub.room_members.clear()
 
 
+@web.middleware
+async def http_logger(request: web.Request, handler):
+    """모든 HTTP 요청 로깅 - WindowsAgent가 HTTP로 보내는지 감지"""
+    log.info(
+        "HTTP %s %s from=%s content_type=%s content_length=%s",
+        request.method,
+        request.path_qs,
+        request.remote,
+        request.content_type,
+        request.content_length,
+    )
+    # 등록되지 않은 경로로 POST 요청이 오면 경고 + body 출력
+    known_paths = {"/offer", "/health", "/who", "/api/accuracy",
+                   "/api/forecast-vs-actual", "/api/forecast-evaluation",
+                   "/api/recent-metrics", "/api/recent-detections"}
+    if request.path not in known_paths:
+        body = await request.read()
+        log.warning(
+            "UNKNOWN PATH: %s %s from=%s body=%s",
+            request.method, request.path, request.remote,
+            body[:500] if body else b"(empty)",
+        )
+    elif request.method == "POST" and request.path != "/offer":
+        body = await request.read()
+        log.warning(
+            "UNEXPECTED POST (not WebRTC offer): %s from=%s body=%s",
+            request.path, request.remote,
+            body[:500] if body else b"(empty)",
+        )
+    return await handler(request)
+
+
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[http_logger])
     app.router.add_get("/health", health)
     app.router.add_get("/who", who)
     app.router.add_post("/offer", offer)
