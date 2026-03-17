@@ -119,9 +119,9 @@ hub = Hub()
 
 
 def make_pc() -> RTCPeerConnection:
-    config = RTCConfiguration(iceServers=[
-        RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-    ])
+    # 같은 LAN에서는 STUN 불필요, host candidate만으로 충분
+    # STUN 추가 시 ICE gathering에 5초+ 지연 발생
+    config = RTCConfiguration(iceServers=[])
     return RTCPeerConnection(configuration=config)
 
 
@@ -306,18 +306,33 @@ async def _handle_offer(request: web.Request) -> web.Response:
         # Auto-join the "pulseai" room for broadcasts
         hub._add_to_room(client_id, "pulseai")
 
-        # welcome 메시지를 약간 지연 전송 (일부 클라이언트가 즉시 수신 불가)
-        async def _send_welcome():
-            await asyncio.sleep(0.5)
+        # welcome + 주기적 keepalive ping
+        async def _channel_keepalive():
+            # welcome 약간 지연 전송
+            await asyncio.sleep(0.3)
             try:
                 if channel.readyState == "open":
                     channel.send(json.dumps({"type": "welcome", "client_id": client_id}, ensure_ascii=False))
                     log.info("Welcome sent to client_id=%s", client_id)
                 else:
                     log.warning("Channel closed before welcome: client_id=%s state=%s", client_id, channel.readyState)
+                    return
             except Exception as e:
                 log.warning("Failed to send welcome to client_id=%s: %s", client_id, e)
-        asyncio.ensure_future(_send_welcome())
+                return
+
+            # 3초마다 ping 전송 — 클라이언트 연결 유지
+            while True:
+                await asyncio.sleep(3)
+                if hub.pcs.get(client_id) is not pc:
+                    break
+                if channel.readyState != "open":
+                    break
+                try:
+                    channel.send(json.dumps({"type": "ping", "ts": int(time.time() * 1000)}, ensure_ascii=False))
+                except Exception:
+                    break
+        asyncio.ensure_future(_channel_keepalive())
 
         @channel.on("close")
         def on_close():
