@@ -56,6 +56,14 @@ class EventState:
 
 
 @dataclass
+class FeatureContribution:
+    """ECOD feature-level contribution to anomaly score."""
+    metric: str           # "CPU", "Memory", "DiskIO"
+    score: float          # raw feature score
+    pct: float            # contribution percentage (0-100)
+    predicted_value: float  # predicted metric value
+
+@dataclass
 class HorizonEvaluation:
     """Evaluation result for a single forecast horizon."""
     horizon_min: int
@@ -70,6 +78,7 @@ class HorizonEvaluation:
     severity: str               # "normal", "warning", "critical"
     is_outlier: bool            # ECOD outlier flag
     prediction_interval: Optional[Dict] = None  # {lo_90, hi_90, lo_95, hi_95}
+    feature_contributions: List['FeatureContribution'] = field(default_factory=list)
 
 
 @dataclass
@@ -97,6 +106,8 @@ class ForecastEvaluator:
         self.models: Dict[str, ECOD] = {}
         # Training data stats for score normalization
         self.train_scores: Dict[str, np.ndarray] = {}
+        # Cached training data for feature contribution calculation
+        self._training_data_cache: Dict[str, np.ndarray] = {}
         # Last retrain timestamp per agent
         self.last_retrain: Dict[str, float] = {}
         # Event states per agent
@@ -180,6 +191,8 @@ class ForecastEvaluator:
 
             # Store training scores for percentile-based normalization
             self.train_scores[agent_id] = model.decision_function(X)
+            # Cache training data for feature contribution calculation
+            self._training_data_cache[agent_id] = X
             self.last_retrain[agent_id] = time.time()
 
             log.info(
@@ -351,10 +364,35 @@ class ForecastEvaluator:
             disk = preds.get("disk_io", 0)
 
             # Feed prediction vector into ECOD
+            feature_names = ["CPU", "Memory", "DiskIO"]
+            feature_values = [cpu, mem, disk]
             point = np.array([[cpu, mem, disk]])
+            feature_contribs: List[FeatureContribution] = []
             try:
                 raw_score = float(model.decision_function(point)[0])
                 is_outlier = bool(model.predict(point)[0] == 1)
+
+                # Feature contribution: percentile rank of each predicted value
+                # against training data — how extreme is each feature?
+                X_train = self._training_data_cache.get(agent_id)
+                if X_train is not None:
+                    per_feature_scores = []
+                    for i in range(len(feature_names)):
+                        col = X_train[:, i]
+                        pct = float(np.sum(col < feature_values[i])) / len(col)
+                        feat_score = abs(pct - 0.5) * 2  # 0=median, 1=extreme
+                        per_feature_scores.append(feat_score)
+
+                    total = sum(per_feature_scores) or 1.0
+                    for i, name in enumerate(feature_names):
+                        feature_contribs.append(FeatureContribution(
+                            metric=name,
+                            score=round(per_feature_scores[i], 4),
+                            pct=round((per_feature_scores[i] / total) * 100, 1),
+                            predicted_value=feature_values[i],
+                        ))
+                    feature_contribs.sort(key=lambda x: x.score, reverse=True)
+
             except Exception as e:
                 log.warning(f"ECOD evaluation failed for {agent_id}/{horizon_min}min: {e}")
                 raw_score = 0.0
@@ -401,6 +439,7 @@ class ForecastEvaluator:
                 severity=severity,
                 is_outlier=is_outlier,
                 prediction_interval=pi,
+                feature_contributions=feature_contribs,
             ))
 
         result.overall_severity = self._worst_severity(result.horizons)
@@ -436,6 +475,15 @@ class ForecastEvaluator:
                     "severity": h.severity,
                     "is_outlier": h.is_outlier,
                     "prediction_interval": h.prediction_interval,
+                    "feature_contributions": [
+                        {
+                            "metric": fc.metric,
+                            "score": fc.score,
+                            "pct": fc.pct,
+                            "predicted_value": fc.predicted_value,
+                        }
+                        for fc in h.feature_contributions
+                    ],
                 }
                 for h in result.horizons
             ],

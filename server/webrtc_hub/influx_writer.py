@@ -615,8 +615,8 @@ async def write_forecast_evaluation(
             point = Point("forecast_evaluation") \
                 .tag("agent_id", agent_id) \
                 .tag("horizon_min", str(h.get("horizon_min", 0))) \
-                .tag("severity", h.get("severity", "normal")) \
-                .tag("overall_severity", overall_severity) \
+                .field("severity", h.get("severity", "normal")) \
+                .field("overall_severity", overall_severity) \
                 .field("pred_cpu", float(h.get("pred_cpu", 0))) \
                 .field("pred_memory", float(h.get("pred_memory", 0))) \
                 .field("pred_disk_io", float(h.get("pred_disk_io", 0))) \
@@ -628,6 +628,13 @@ async def write_forecast_evaluation(
                 .field("model_ready", 1 if model_ready else 0) \
                 .field("data_source", data_source) \
                 .time(ts_dt)
+
+            # Feature contributions (flattened)
+            for fc in h.get("feature_contributions", []):
+                metric_key = fc.get("metric", "").lower().replace(" ", "_")
+                if metric_key:
+                    point.field(f"contrib_{metric_key}_pct", float(fc.get("pct", 0)))
+                    point.field(f"contrib_{metric_key}_score", float(fc.get("score", 0)))
             points.append(point)
 
         def _write():
@@ -700,21 +707,22 @@ def get_latest_forecast_evaluation(
                 field = record.get_field()
                 value = record.get_value()
                 ts = str(record.get_time())
-                sev = record.values.get("severity", "normal")
-                o_sev = record.values.get("overall_severity", "normal")
 
                 if latest_time is None or ts > latest_time:
                     latest_time = ts
-                    overall_severity = o_sev
 
                 if h_min not in horizons_map:
                     horizons_map[h_min] = {
                         "horizon_min": int(h_min),
-                        "severity": sev,
+                        "severity": "normal",
                     }
 
                 h = horizons_map[h_min]
-                if field == "pred_cpu" and value is not None:
+                if field == "severity" and value is not None:
+                    h["severity"] = str(value)
+                elif field == "overall_severity" and value is not None:
+                    overall_severity = str(value)
+                elif field == "pred_cpu" and value is not None:
                     h["pred_cpu"] = float(value)
                 elif field == "pred_memory" and value is not None:
                     h["pred_memory"] = float(value)
@@ -734,6 +742,23 @@ def get_latest_forecast_evaluation(
                     h["model_ready"] = bool(value)
                 elif field == "data_source" and value is not None:
                     h["data_source"] = str(value)
+                elif field.startswith("contrib_") and field.endswith("_pct") and value is not None:
+                    # e.g. contrib_cpu_pct → metric=CPU
+                    metric_key = field[len("contrib_"):-len("_pct")]
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "diskio": "DiskIO"}.get(metric_key, metric_key)
+                    if "feature_contributions" not in h:
+                        h["feature_contributions"] = {}
+                    if metric_name not in h["feature_contributions"]:
+                        h["feature_contributions"][metric_name] = {"metric": metric_name, "pct": 0, "score": 0, "predicted_value": 0}
+                    h["feature_contributions"][metric_name]["pct"] = float(value)
+                elif field.startswith("contrib_") and field.endswith("_score") and value is not None:
+                    metric_key = field[len("contrib_"):-len("_score")]
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "diskio": "DiskIO"}.get(metric_key, metric_key)
+                    if "feature_contributions" not in h:
+                        h["feature_contributions"] = {}
+                    if metric_name not in h["feature_contributions"]:
+                        h["feature_contributions"][metric_name] = {"metric": metric_name, "pct": 0, "score": 0, "predicted_value": 0}
+                    h["feature_contributions"][metric_name]["score"] = float(value)
 
         if not horizons_map:
             return None
@@ -758,6 +783,22 @@ def get_latest_forecast_evaluation(
             h.setdefault("reliability", 0.5)
             h.setdefault("is_outlier", False)
 
+            # Convert feature_contributions dict → sorted list + fill predicted_value
+            fc_dict = h.pop("feature_contributions", {})
+            if fc_dict:
+                fc_list = sorted(fc_dict.values(), key=lambda x: x.get("score", 0), reverse=True)
+                # Fill predicted_value from horizon data
+                for fc in fc_list:
+                    if fc["metric"] == "CPU":
+                        fc["predicted_value"] = h["pred_cpu"]
+                    elif fc["metric"] == "Memory":
+                        fc["predicted_value"] = h["pred_memory"]
+                    elif fc["metric"] == "DiskIO":
+                        fc["predicted_value"] = h["pred_disk_io"]
+                h["feature_contributions"] = fc_list
+            else:
+                h["feature_contributions"] = []
+
         model_ready = any(h.get("model_ready") for h in horizons)
         data_source = next((h.get("data_source", "none") for h in horizons if h.get("data_source")), "none")
 
@@ -774,6 +815,75 @@ def get_latest_forecast_evaluation(
     except Exception as e:
         log.warning(f"Failed to query forecast evaluation: {e}")
         return None
+
+
+async def write_peripheral_status(
+    agent_id: str,
+    timestamp: str,
+    peripherals: Dict[str, str],
+    bucket: str = INFLUX_BUCKET,
+) -> bool:
+    """
+    Write peripheral device status to InfluxDB.
+
+    Measurement: 'peripheral_status'
+    Tags: agent_id
+    Fields: device name → status value (1=연결, 0=실패, -1=미사용)
+    """
+    global client, write_api
+
+    if not client or not write_api:
+        init_influx()
+        if not client or not write_api:
+            return False
+
+    if not peripherals:
+        return True
+
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        try:
+            ts_dt = datetime.fromisoformat(ts_str)
+        except (ValueError, AttributeError):
+            ts_dt = datetime.utcnow()
+
+        point = Point("peripheral_status") \
+            .tag("agent_id", agent_id)
+
+        status_map = {"연결": 1, "실패": 0, "미사용": -1}
+        for device, status in peripherals.items():
+            point.field(device, status_map.get(status, -1))
+            point.field(f"{device}_raw", status)
+
+        point.time(ts_dt)
+
+        def _write():
+            line = point.to_line_protocol()
+            write_url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={bucket}"
+            req = urllib.request.Request(
+                write_url,
+                data=line.encode('utf-8'),
+                headers={
+                    "Authorization": f"Token {INFLUX_TOKEN}",
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status not in [200, 204]:
+                        return False
+            except urllib.error.HTTPError:
+                return False
+            return True
+
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(loop.run_in_executor(_write_executor, _write), timeout=10.0)
+
+    except Exception as e:
+        if "shutdown" not in str(e).lower():
+            log.warning(f"Failed to write peripheral status: {e}")
+        return False
 
 
 async def write_detection(

@@ -562,6 +562,20 @@ async def main(
         total_evaluations = 0
         fe = ForecastEvaluator()
 
+        # Pre-populate ForecastEvaluator with training data from data_points
+        # so ECOD model + feature contributions work from the start
+        _train_X = np.array([[dp["CPU"], dp["Memory"], dp["DiskIO"]] for dp in data_points])
+        if len(_train_X) >= 10:
+            from pyod.models.ecod import ECOD as _ECOD
+            _ecod = _ECOD(contamination=0.05)
+            _ecod.fit(_train_X)
+            fe.models[config.agent_id] = _ecod
+            fe.train_scores[config.agent_id] = _ecod.decision_function(_train_X)
+            fe._training_data_cache[config.agent_id] = _train_X
+            import time as _time
+            fe.last_retrain[config.agent_id] = _time.time()
+            log.info(f"Pre-trained ForecastEvaluator ECOD with {len(_train_X)} points")
+
         for i, (data_point, result) in enumerate(zip(data_points, detection_results)):
             # Write metrics
             try:

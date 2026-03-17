@@ -346,10 +346,34 @@ async def offer(request: web.Request) -> web.Response:
 
             if t == "data":
                 payload = data.get("payload", {})
+                agent_id = payload.get("AgentId")
+
+                # AgentId가 없는 메시지는 무시 (C# heartbeat 등)
+                if not agent_id:
+                    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+                    return
+
+                # 주변장치 상태 저장 (Logs 필드에 포함된 경우)
+                for log_entry in payload.get("Logs", []):
+                    if log_entry.get("BodyType") == "주변장치 체크":
+                        peripherals = log_entry.get("KeyValues", {})
+                        if peripherals:
+                            asyncio.create_task(influx_writer.write_peripheral_status(
+                                agent_id,
+                                payload.get("Timestamp", ""),
+                                peripherals,
+                                bucket=influx_writer.INFLUX_BUCKET,
+                            ))
+
+                # 메트릭 없는 로그 전용 레코드는 여기서 종료
+                if "CPU" not in payload:
+                    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+                    return
+
                 result = process_data(payload)
 
                 asyncio.create_task(influx_writer.write_metrics(
-                    payload.get("AgentId"),
+                    agent_id,
                     payload.get("Timestamp"),
                     result.get("raw_metrics", {}),
                     bucket=influx_writer.INFLUX_BUCKET,

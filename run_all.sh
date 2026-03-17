@@ -5,8 +5,7 @@
 #   1) InfluxDB        (Docker)
 #   2) Python Server   (uv)
 #   3) React Client    (Vite dev)
-#   4) C# WebRTC Client (webrtc_csharp_client)
-#   5) C# POS Agent Sim (pos_agent_sim)
+#   4) C# POS Agent Sim (pos_agent_sim)
 #
 # Commands:
 #   ./run_all.sh start [sample|live] [options]   # 백그라운드로 전체 실행
@@ -62,7 +61,6 @@ BUCKET="pos_metrics"   # live(기본): pos_metrics  /  sample: sample_metrics
 RUN_INFLUX=true
 RUN_SERVER=true
 RUN_CLIENT=true
-RUN_CSHARP_CLIENT=true
 RUN_POS_SIM=true
 POS_SCENARIO="normal"
 POS_INTERVAL="5"
@@ -93,7 +91,7 @@ while [[ $# -gt 0 ]]; do
         --sample-file)      SAMPLE_FILE="$2"; shift 2 ;;
         --no-influx)        RUN_INFLUX=false; shift ;;
         --no-client)        RUN_CLIENT=false; shift ;;
-        --no-csharp)        RUN_CSHARP_CLIENT=false; RUN_POS_SIM=false; shift ;;
+        --no-csharp)        RUN_POS_SIM=false; shift ;;
         --no-pos-sim)       RUN_POS_SIM=false; shift ;;
         --scenario)         POS_SCENARIO="$2"; shift 2 ;;
         --interval)         POS_INTERVAL="$2"; shift 2 ;;
@@ -118,14 +116,12 @@ SERVER_URL="http://127.0.0.1:${SERVER_PORT}"
 # --only 처리
 if [[ -n "$ONLY" ]]; then
     RUN_INFLUX=false; RUN_SERVER=false; RUN_CLIENT=false
-    RUN_CSHARP_CLIENT=false; RUN_POS_SIM=false
+    RUN_POS_SIM=false
     case "$ONLY" in
-        influx)        RUN_INFLUX=true ;;
-        server)        RUN_SERVER=true ;;
-        client)        RUN_CLIENT=true ;;
-        csharp-client) RUN_CSHARP_CLIENT=true ;;
-        pos-sim)       RUN_POS_SIM=true ;;
-        csharp)        RUN_CSHARP_CLIENT=true; RUN_POS_SIM=true ;;
+        influx)   RUN_INFLUX=true ;;
+        server)   RUN_SERVER=true ;;
+        client)   RUN_CLIENT=true ;;
+        pos-sim)  RUN_POS_SIM=true ;;
         *) echo -e "${RED}Unknown component: $ONLY${NC}"; exit 1 ;;
     esac
 fi
@@ -174,7 +170,6 @@ do_stop() {
         # 포트/이름으로 찾아 종료
         pkill -f "webrtc_hub.server" 2>/dev/null || true
         pkill -f "vite"              2>/dev/null || true
-        pkill -f "webrtc_csharp_client" 2>/dev/null || true
         pkill -f "PosAgentSim"       2>/dev/null || true
     fi
 
@@ -233,7 +228,7 @@ do_start() {
     # 의존성 체크
     $RUN_SERVER  && { check_dep uv || check_dep python3; }
     $RUN_CLIENT  && check_dep npm
-    { $RUN_CSHARP_CLIENT || $RUN_POS_SIM; } && check_dep dotnet
+    $RUN_POS_SIM && check_dep dotnet
     $RUN_INFLUX  && check_dep docker
 
     mkdir -p "$LOG_DIR"
@@ -247,7 +242,7 @@ do_start() {
 
     # ── 1. InfluxDB ─────────────────────────────────────────────────────────
     if $RUN_INFLUX; then
-        echo -e "${MAGENTA}[1/5] InfluxDB (Docker)...${NC}"
+        echo -e "${MAGENTA}[1/4] InfluxDB (Docker)...${NC}"
         $DC -f "$ROOT/docker-compose.yml" up -d
         echo -n "  Waiting"
         for i in $(seq 1 30); do
@@ -279,13 +274,13 @@ do_start() {
         done
         echo ""
     else
-        echo -e "${YELLOW}[1/5] InfluxDB — skipped${NC}"
+        echo -e "${YELLOW}[1/4] InfluxDB — skipped${NC}"
     fi
 
     # ── 2. Python Server ────────────────────────────────────────────────────
     if $RUN_SERVER; then
         local server_log="$LOG_DIR/server-${TS}.log"
-        echo -e "${GREEN}[2/5] Python Server (port=${SERVER_PORT})...${NC}"
+        echo -e "${GREEN}[2/4] Python Server (port=${SERVER_PORT})...${NC}"
 
         # 포트 점유 시 기존 프로세스 정리
         if lsof -ti :"$SERVER_PORT" >/dev/null 2>&1; then
@@ -313,13 +308,13 @@ do_start() {
         done
         echo ""
     else
-        echo -e "${YELLOW}[2/5] Python Server — skipped${NC}"
+        echo -e "${YELLOW}[2/4] Python Server — skipped${NC}"
     fi
 
     # ── 3. React Client ─────────────────────────────────────────────────────
     if $RUN_CLIENT; then
         local client_log="$LOG_DIR/client-${TS}.log"
-        echo -e "${BLUE}[3/5] React Client (Vite)...${NC}"
+        echo -e "${BLUE}[3/4] React Client (Vite)...${NC}"
 
         if [[ "$background" == "true" ]]; then
             # stdin을 /dev/null로 리다이렉트 — Vite의 인터랙티브 stdin 읽기 방지
@@ -333,34 +328,16 @@ do_start() {
         echo -e "  URL: ${CYAN}http://localhost:5173${NC}"
         echo ""
     else
-        echo -e "${YELLOW}[3/5] React Client — skipped${NC}"
+        echo -e "${YELLOW}[3/4] React Client — skipped${NC}"
     fi
 
-    # ── 4. C# WebRTC Client ─────────────────────────────────────────────────
-    if $RUN_CSHARP_CLIENT; then
-        local csharp_log="$LOG_DIR/csharp-client-${TS}.log"
-        echo -e "${MAGENTA}[4/5] C# WebRTC Client...${NC}"
-
-        if [[ "$background" == "true" ]]; then
-            (cd "$ROOT/webrtc_csharp_client"; dotnet run -- "$SERVER_URL" >> "$csharp_log" 2>&1) &
-        else
-            (cd "$ROOT/webrtc_csharp_client"; dotnet run -- "$SERVER_URL" 2>&1 | tee "$csharp_log") &
-        fi
-        local csharp_pid=$!
-        save_pid "csharp-client" "$csharp_pid"
-        echo -e "  PID=${csharp_pid} | Log: ${csharp_log}"
-        echo ""
-    else
-        echo -e "${YELLOW}[4/5] C# WebRTC Client — skipped${NC}"
-    fi
-
-    # ── 5. C# POS Agent Sim ─────────────────────────────────────────────────
+    # ── 4. C# POS Agent Sim ─────────────────────────────────────────────────
     if $RUN_POS_SIM; then
         # --sim 이 하나라도 있으면 다중 모드, 없으면 단일 모드
         if [[ ${#SIM_CONFIGS[@]} -gt 0 ]]; then
-            echo -e "${RED}[5/5] C# POS Agent Sim — ${#SIM_CONFIGS[@]}개 인스턴스${NC}"
+            echo -e "${RED}[4/4] C# POS Agent Sim — ${#SIM_CONFIGS[@]}개 인스턴스${NC}"
         else
-            echo -e "${RED}[5/5] C# POS Agent Sim (scenario=${POS_SCENARIO}, store=${POS_STORE_CODE}, pos=${POS_POS_NO})${NC}"
+            echo -e "${RED}[4/4] C# POS Agent Sim (scenario=${POS_SCENARIO}, store=${POS_STORE_CODE}, pos=${POS_POS_NO})${NC}"
         fi
 
         # 단일 인스턴스 헬퍼
@@ -409,7 +386,7 @@ do_start() {
         fi
         echo ""
     else
-        echo -e "${YELLOW}[5/5] C# POS Agent Sim — skipped${NC}"
+        echo -e "${YELLOW}[4/4] C# POS Agent Sim — skipped${NC}"
     fi
 
     # ── Summary ─────────────────────────────────────────────────────────────

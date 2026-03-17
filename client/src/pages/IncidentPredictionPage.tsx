@@ -2,10 +2,13 @@ import { useEffect, useState, useCallback } from 'react';
 import { IncidentPrediction } from '../components/IncidentPrediction';
 
 const DEFAULT_AGENT_ID = 'V135-POS-03';
-const POLL_INTERVAL = 30_000; // 30초마다 폴링
+const POLL_INTERVAL = 30_000;
+
+type BucketMode = 'pos_metrics' | 'sample_metrics';
 
 export function IncidentPredictionPage() {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
+  const [bucket, setBucket] = useState<BucketMode>('pos_metrics');
   const [evaluation, setEvaluation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -14,7 +17,7 @@ export function IncidentPredictionPage() {
   const fetchEvaluation = useCallback(async () => {
     try {
       const resp = await fetch(
-        `${serverUrl}/api/forecast-evaluation?agent_id=${DEFAULT_AGENT_ID}`
+        `${serverUrl}/api/forecast-evaluation?agent_id=${DEFAULT_AGENT_ID}&bucket=${bucket}`
       );
       if (resp.ok) {
         const data = await resp.json();
@@ -22,8 +25,12 @@ export function IncidentPredictionPage() {
           setEvaluation(data);
           setLastUpdated(new Date());
           setError(null);
+        } else {
+          setEvaluation(null);
+          setError('분석 데이터가 없습니다.');
         }
       } else if (resp.status === 404) {
+        setEvaluation(null);
         setError('아직 분석 데이터가 없습니다. 서버에서 데이터를 수집 중입니다.');
       }
     } catch {
@@ -31,10 +38,13 @@ export function IncidentPredictionPage() {
     } finally {
       setLoading(false);
     }
-  }, [serverUrl]);
+  }, [serverUrl, bucket]);
 
-  // 초기 로드 + 주기적 폴링
+  // 버킷 변경 시 초기화 + 재조회
   useEffect(() => {
+    setLoading(true);
+    setEvaluation(null);
+    setError(null);
     fetchEvaluation();
     const interval = setInterval(fetchEvaluation, POLL_INTERVAL);
     return () => clearInterval(interval);
@@ -60,7 +70,36 @@ export function IncidentPredictionPage() {
             ARIMA 예측값을 장기 ECOD 모델로 평가하여 1시간~2일 후 사고 가능성을 판단합니다
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Bucket Toggle */}
+          <div style={{
+            display: 'flex', borderRadius: '8px', overflow: 'hidden',
+            border: '1px solid #334155',
+          }}>
+            <button
+              onClick={() => setBucket('pos_metrics')}
+              style={{
+                padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                border: 'none', transition: 'all 0.2s',
+                backgroundColor: bucket === 'pos_metrics' ? '#14532d' : '#1e293b',
+                color: bucket === 'pos_metrics' ? '#4ade80' : '#64748b',
+              }}
+            >
+              Live
+            </button>
+            <button
+              onClick={() => setBucket('sample_metrics')}
+              style={{
+                padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                border: 'none', borderLeft: '1px solid #334155', transition: 'all 0.2s',
+                backgroundColor: bucket === 'sample_metrics' ? '#0c4a6e' : '#1e293b',
+                color: bucket === 'sample_metrics' ? '#38bdf8' : '#64748b',
+              }}
+            >
+              Sample
+            </button>
+          </div>
+
           {dataAge && (
             <span style={{
               padding: '4px 10px',
