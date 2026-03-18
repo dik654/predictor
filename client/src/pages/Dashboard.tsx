@@ -181,8 +181,8 @@ export function Dashboard() {
     tooltip: chartTooltip,
     legend: { bottom: 0, data: ['예측값', '실제값', '잔차'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
     grid: [
-      { left: '8%', right: '8%', top: '12%', bottom: '38%' },
-      { left: '8%', right: '8%', top: '68%', bottom: '12%' },
+      { left: '8%', right: '8%', top: '12%', bottom: '42%' },
+      { left: '8%', right: '8%', top: '72%', bottom: '12%' },
     ],
     xAxis: [
       { type: 'category', gridIndex: 0, data: selectedArimaData.map(d => fmtTime(d.timestamp)), axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#1f2937' } } },
@@ -278,7 +278,7 @@ export function Dashboard() {
             }}>{m}</button>
           ))}
         </div>
-        <ReactECharts option={arimaChartOption} style={{ height: '340px' }} />
+        <ReactECharts option={arimaChartOption} style={{ height: '400px' }} />
       </div>
 
       {/* Peripheral Status Cards */}
