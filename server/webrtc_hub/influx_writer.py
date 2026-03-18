@@ -341,7 +341,7 @@ async def write_forecast(
             log.warning(f"Failed to parse forecast timestamp '{timestamp}', using current time: {te}")
             ts_dt = datetime.utcnow()
 
-        point = Point("forecast") \
+        point = Point("arima_forecast") \
             .tag("agent_id", agent_id) \
             .tag("metric", metric) \
             .tag("horizon_min", str(horizon_min))
@@ -652,7 +652,7 @@ async def write_forecast_evaluation(
 
         points = []
         for h in horizons:
-            point = Point("forecast_evaluation") \
+            point = Point("arima_ecod_ensemble_forecast_eval") \
                 .tag("agent_id", agent_id) \
                 .tag("horizon_min", str(h.get("horizon_min", 0)))
 
@@ -732,7 +732,7 @@ def get_latest_forecast_evaluation(
         query = f'''
         from(bucket: "{target_bucket}")
           |> range(start: -24h)
-          |> filter(fn: (r) => r._measurement == "forecast_evaluation")
+          |> filter(fn: (r) => r._measurement == "arima_ecod_ensemble_forecast_eval")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> last()
         '''
@@ -755,18 +755,21 @@ def get_latest_forecast_evaluation(
                 if latest_time is None or ts > latest_time:
                     latest_time = ts
 
+                # severity, overall_severity, data_source are now tags
+                rec_severity = record.values.get("severity", "normal")
+                rec_overall = record.values.get("overall_severity", "normal")
+                if rec_overall != "normal":
+                    overall_severity = rec_overall
+
                 if h_min not in horizons_map:
                     horizons_map[h_min] = {
                         "horizon_min": int(h_min),
-                        "severity": "normal",
+                        "severity": rec_severity,
+                        "data_source": record.values.get("data_source", "none"),
                     }
 
                 h = horizons_map[h_min]
-                if field == "severity" and value is not None:
-                    h["severity"] = str(value)
-                elif field == "overall_severity" and value is not None:
-                    overall_severity = str(value)
-                elif field == "predicted_cpu" and value is not None:
+                if field == "predicted_cpu" and value is not None:
                     h["predicted_cpu"] = float(value)
                 elif field == "predicted_memory" and value is not None:
                     h["predicted_memory"] = float(value)
@@ -784,20 +787,17 @@ def get_latest_forecast_evaluation(
                     h["is_outlier"] = bool(value)
                 elif field == "model_ready":
                     h["model_ready"] = bool(value)
-                elif field == "data_source" and value is not None:
-                    h["data_source"] = str(value)
-                elif field.startswith("contrib_") and field.endswith("_pct") and value is not None:
-                    # e.g. contrib_cpu_pct → metric=CPU
-                    metric_key = field[len("contrib_"):-len("_pct")]
-                    metric_name = {"cpu": "CPU", "memory": "Memory", "diskio": "DiskIO"}.get(metric_key, metric_key)
+                elif field.startswith("contribution_") and field.endswith("_percent") and value is not None:
+                    metric_key = field[len("contribution_"):-len("_percent")]
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO"}.get(metric_key, metric_key)
                     if "feature_contributions" not in h:
                         h["feature_contributions"] = {}
                     if metric_name not in h["feature_contributions"]:
                         h["feature_contributions"][metric_name] = {"metric": metric_name, "pct": 0, "score": 0, "predicted_value": 0}
                     h["feature_contributions"][metric_name]["pct"] = float(value)
-                elif field.startswith("contrib_") and field.endswith("_score") and value is not None:
-                    metric_key = field[len("contrib_"):-len("_score")]
-                    metric_name = {"cpu": "CPU", "memory": "Memory", "diskio": "DiskIO"}.get(metric_key, metric_key)
+                elif field.startswith("contribution_") and field.endswith("_score") and value is not None:
+                    metric_key = field[len("contribution_"):-len("_score")]
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO"}.get(metric_key, metric_key)
                     if "feature_contributions" not in h:
                         h["feature_contributions"] = {}
                     if metric_name not in h["feature_contributions"]:
@@ -1037,7 +1037,7 @@ async def write_detection(
         except (ValueError, AttributeError):
             ts_dt = datetime.utcnow()
 
-        point = Point("detection") \
+        point = Point("anomaly_detection") \
             .tag("agent_id", agent_id) \
             .tag("engine", engine) \
             .tag("metric", metric) \
@@ -1045,15 +1045,14 @@ async def write_detection(
 
         _apply_store_tags(point, store_info)
 
-        point.field("value", float(value)) \
-            .field("score", float(score)) \
+        point.field("score", float(score)) \
             .field("threshold", float(threshold)) \
             .field("confidence", float(confidence))
 
         if forecast is not None:
-            point.field("forecast", float(forecast))
+            point.field("arima_predicted", float(forecast))
         if residual is not None:
-            point.field("residual", float(residual))
+            point.field("arima_deviation", float(residual))
         if details:
             point.tag("details", str(details))
 
@@ -1166,7 +1165,7 @@ def get_recent_detections(
         query = f'''
         from(bucket: "{target_bucket}")
           |> range(start: -24h)
-          |> filter(fn: (r) => r._measurement == "detection")
+          |> filter(fn: (r) => r._measurement == "anomaly_detection")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> sort(columns: ["_time"], desc: true)
           |> limit(n: {limit})
@@ -1194,25 +1193,22 @@ def get_recent_detections(
                         "engine": engine,
                         "metric": metric,
                         "severity": severity,
-                        "value": 0, "score": 0, "threshold": 0, "confidence": 0,
-                        "forecast": None, "residual": None, "details": None,
+                        "score": 0, "threshold": 0, "confidence": 0,
+                        "arima_predicted": None, "arima_deviation": None,
+                        "details": record.values.get("details"),
                     }
 
                 rec = records_map[key]
-                if field == "value" and value is not None:
-                    rec["value"] = float(value)
-                elif field == "score" and value is not None:
+                if field == "score" and value is not None:
                     rec["score"] = float(value)
                 elif field == "threshold" and value is not None:
                     rec["threshold"] = float(value)
                 elif field == "confidence" and value is not None:
                     rec["confidence"] = float(value)
-                elif field == "forecast" and value is not None:
-                    rec["forecast"] = float(value)
-                elif field == "residual" and value is not None:
-                    rec["residual"] = float(value)
-                elif field == "details" and value is not None:
-                    rec["details"] = str(value)
+                elif field == "arima_predicted" and value is not None:
+                    rec["arima_predicted"] = float(value)
+                elif field == "arima_deviation" and value is not None:
+                    rec["arima_deviation"] = float(value)
 
         records = sorted(records_map.values(), key=lambda x: x["timestamp"])
         log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records")

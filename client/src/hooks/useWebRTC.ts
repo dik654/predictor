@@ -23,11 +23,10 @@ interface AnomalyData {
   detections: Array<{
     engine: string;
     metric: string;
-    value: number;
     score: number;
     threshold: number;
-    forecast?: number;
-    residual?: number;
+    arima_predicted?: number;
+    arima_deviation?: number;
     severity: string;
     confidence?: number;
     details?: string;

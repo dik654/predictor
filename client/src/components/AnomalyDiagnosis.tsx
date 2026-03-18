@@ -4,13 +4,12 @@ interface Detection {
   timestamp: string;
   engine: string;
   metric: string;
-  value: number;
   score: number;
   threshold: number;
   severity: string;
   confidence: number;
-  forecast?: number;
-  residual?: number;
+  arima_predicted?: number;
+  arima_deviation?: number;
   details?: string;
 }
 
@@ -37,7 +36,7 @@ export function AnomalyDiagnosis({ detections }: Props) {
     // ARIMA 잔차
     const arimaResults = latest
       .filter(d => d.engine === 'arima')
-      .sort((a, b) => (b.residual ?? 0) - (a.residual ?? 0));
+      .sort((a, b) => (b.arima_deviation ?? 0) - (a.arima_deviation ?? 0));
 
     // ECOD feature 기여도 계산 (%)
     const totalEcodScore = ecodFeatures.reduce((sum, d) => sum + d.score, 0) || 1;
@@ -164,20 +163,18 @@ export function AnomalyDiagnosis({ detections }: Props) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {diagnosis.arimaResults.map(a => {
-                const residualPct = a.threshold > 0 ? ((a.residual ?? 0) / a.threshold) * 100 : 0;
-                const isOver = (a.residual ?? 0) > a.threshold;
+                const residualPct = a.threshold > 0 ? ((a.arima_deviation ?? 0) / a.threshold) * 100 : 0;
+                const isOver = (a.arima_deviation ?? 0) > a.threshold;
                 return (
                   <div key={a.metric}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
                       <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{a.metric}</span>
                       <span style={{ color: isOver ? '#ef4444' : '#94a3b8' }}>
-                        잔차 {a.residual?.toFixed(2)} / 임계 {a.threshold.toFixed(2)}
+                        잔차 {a.arima_deviation?.toFixed(2)} / 임계 {a.threshold.toFixed(2)}
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#64748b' }}>
-                      <span>실제 {a.value.toFixed(1)}</span>
-                      <span>→</span>
-                      <span>예측 {a.forecast?.toFixed(1)}</span>
+                      <span>예측 {a.arima_predicted?.toFixed(1)}</span>
                       {isOver && (
                         <span style={{
                           marginLeft: 'auto',

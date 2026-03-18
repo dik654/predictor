@@ -646,11 +646,10 @@ class EnhancedAnomalyDetector:
                 {
                     "engine": d.engine,
                     "metric": d.metric,
-                    "value": d.value,
                     "score": d.score,
                     "threshold": d.threshold,
-                    "forecast": d.forecast,
-                    "residual": d.residual,
+                    "arima_predicted": d.forecast,
+                    "arima_deviation": d.residual,
                     "severity": d.severity,
                     "confidence": d.confidence,
                     "details": d.details,

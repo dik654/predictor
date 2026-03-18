@@ -17,13 +17,12 @@ interface InfluxDetection {
   timestamp: string;
   engine: string;
   metric: string;
-  value: number;
   score: number;
   threshold: number;
   severity: string;
   confidence: number;
-  forecast?: number;
-  residual?: number;
+  arima_predicted?: number;
+  arima_deviation?: number;
   details?: string;
 }
 
@@ -129,7 +128,7 @@ export function Dashboard() {
   const arimaChartOption = {
     title: { text: `AutoARIMA 예측 vs 실제 (${viewMode === 'realtime' ? '실시간' : 'DB 전체'})`, left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
     tooltip: { trigger: 'axis' },
-    legend: { bottom: 0, data: ['실제값', '예측값', '잔차'], textStyle: { color: '#94a3b8' } },
+    legend: { bottom: 0, data: ['예측값', '잔차'], textStyle: { color: '#94a3b8' } },
     grid: { left: '10%', right: '10%', top: '18%', bottom: '18%' },
     xAxis: { type: 'category', data: cpuArimaData.map((_: InfluxDetection, i: number) => i + 1), axisLabel: { color: '#94a3b8' } },
     yAxis: [
@@ -137,10 +136,9 @@ export function Dashboard() {
       { type: 'value', name: 'Residual', position: 'right', axisLabel: { color: '#94a3b8' }, nameTextStyle: { color: '#94a3b8' } },
     ],
     series: [
-      { name: '실제값', type: 'line', data: cpuArimaData.map(d => d.value), itemStyle: { color: '#22c55e' }, smooth: true },
-      { name: '예측값', type: 'line', data: cpuArimaData.map(d => d.forecast), itemStyle: { color: '#8b5cf6' }, lineStyle: { type: 'dashed' }, smooth: true },
+      { name: '예측값', type: 'line', data: cpuArimaData.map(d => d.arima_predicted), itemStyle: { color: '#8b5cf6' }, lineStyle: { type: 'dashed' }, smooth: true },
       {
-        name: '잔차', type: 'bar', yAxisIndex: 1, data: cpuArimaData.map(d => d.residual),
+        name: '잔차', type: 'bar', yAxisIndex: 1, data: cpuArimaData.map(d => d.arima_deviation),
         itemStyle: { color: (params: any) => { const th = cpuArimaData[params.dataIndex]?.threshold || 1; return params.value > th ? '#ef4444' : '#64748b'; } },
       },
     ],
@@ -260,7 +258,7 @@ export function Dashboard() {
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
                     <td style={{ padding: '8px 10px', color: '#94a3b8', fontSize: '11px' }}>
-                      {d.details || (d.forecast ? `예측: ${d.forecast?.toFixed(1)}` : '-')}
+                      {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
                     </td>
                   </tr>
                 ))}

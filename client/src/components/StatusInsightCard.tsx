@@ -3,12 +3,11 @@ import { useMemo } from 'react';
 interface Detection {
   engine: string;
   metric: string;
-  value: number;
   score: number;
   severity: string;
   confidence?: number;
   details?: string;
-  forecast?: number;
+  arima_predicted?: number;
   forecast_horizon?: Array<{
     minutes: number;
     value: number;
@@ -60,7 +59,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
       score: multivariate.score,
       details: metrics.map(m => ({
         metric: m.metric,
-        value: m.value,
+        score: m.score,
         severity: m.severity,
       })),
     };
@@ -190,7 +189,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
                 backgroundColor: d.severity === 'warning' ? '#854d0e' : '#166534',
                 color: d.severity === 'warning' ? '#fef3c7' : '#dcfce7',
               }}>
-                {d.metric}: {typeof d.value === 'number' ? d.value.toFixed(1) : d.value}
+                {d.metric}: {typeof d.score === 'number' ? d.score.toFixed(3) : d.score}
               </span>
             ))}
           </div>

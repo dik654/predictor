@@ -1,11 +1,10 @@
 interface Detection {
   engine: string;
   metric: string;
-  value: number;
   score: number;
   threshold: number;
-  forecast?: number;
-  residual?: number;
+  arima_predicted?: number;
+  arima_deviation?: number;
   severity: string;
 }
 
@@ -101,13 +100,11 @@ export function AnomalyAlert({ anomalies }: Props) {
               <div style={{ fontSize: '13px', marginTop: '4px', color: '#374151' }}>
                 <span>엔진: {d.engine.toUpperCase()}</span>
                 <span style={{ margin: '0 8px' }}>|</span>
-                <span>값: {d.value.toFixed(2)}</span>
-                <span style={{ margin: '0 8px' }}>|</span>
                 <span>점수: {d.score.toFixed(2)}</span>
               </div>
-              {d.engine === 'arima' && d.forecast !== undefined && (
+              {d.engine === 'arima' && d.arima_predicted !== undefined && (
                 <div style={{ fontSize: '12px', marginTop: '4px', color: '#6b7280' }}>
-                  예측값: {d.forecast.toFixed(2)} | 잔차: {d.residual?.toFixed(2)}
+                  예측값: {d.arima_predicted.toFixed(2)} | 잔차: {d.arima_deviation?.toFixed(2)}
                 </div>
               )}
             </div>
