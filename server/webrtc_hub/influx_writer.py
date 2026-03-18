@@ -349,7 +349,6 @@ async def write_forecast(
         _apply_store_tags(point, store_info)
 
         point.field("predicted_value", float(predicted_value)) \
-            .field("horizon_minutes", int(horizon_min)) \
             .time(ts_dt)
 
         # Run blocking write in thread pool to avoid blocking event loop
