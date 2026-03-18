@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { Usb, ScanBarcode, BookOpen, Smartphone, Keyboard, CreditCard, CircleDot, Wifi, WifiOff, HelpCircle } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 interface PeripheralAlert {
   engine: string;
@@ -11,88 +13,88 @@ interface Props {
   alerts: PeripheralAlert[];
 }
 
-// 기본 주변장치 목록 (POS 기준)
-const DEFAULT_PERIPHERALS = [
-  { id: '키패드', icon: '⌨️', name: '키패드' },
-  { id: '스캐너-2D스캐너', icon: '📷', name: '2D 스캐너' },
-  { id: 'OCR', icon: '🔤', name: 'OCR' },
-  { id: '카드리더기', icon: '💳', name: '카드리더기' },
-  { id: '휴대폰충전기', icon: '🔌', name: '충전기' },
-  { id: '고객단말기', icon: '📱', name: '고객단말기' },
+// PulseAI-WindowsAgent 송신전문 v0.1 기준 주변장치 목록
+const PERIPHERALS: { id: string; name: string; icon: ReactNode }[] = [
+  { id: '동글이', name: '동글이', icon: <Usb size={18} /> },
+  { id: '스캐너-핸드스캐너', name: '핸드스캐너', icon: <ScanBarcode size={18} /> },
+  { id: '여권리더기', name: '여권리더기', icon: <BookOpen size={18} /> },
+  { id: '스캐너-2D스캐너', name: '2D 스캐너', icon: <CircleDot size={18} /> },
+  { id: '휴대폰충전기', name: '충전기', icon: <Smartphone size={18} /> },
+  { id: '키보드', name: '키보드', icon: <Keyboard size={18} /> },
+  { id: 'MSR', name: 'MSR', icon: <CreditCard size={18} /> },
 ];
 
+type DeviceState = 'connected' | 'disconnected' | 'no_data';
+
 export function PeripheralCards({ alerts }: Props) {
-  // 장비별 상태 집계
+  // 장비별 최신 상태 집계
   const deviceStatus = useMemo(() => {
-    const statusMap = new Map<string, { failCount: number; lastAlert?: string }>();
-    
-    // 기본값 설정
-    DEFAULT_PERIPHERALS.forEach(p => {
-      statusMap.set(p.id, { failCount: 0 });
-    });
-    
-    // 알림 기반 상태 업데이트
+    const statusMap = new Map<string, DeviceState>();
+
+    // 기본값: 데이터 없음
+    PERIPHERALS.forEach(p => statusMap.set(p.id, 'no_data'));
+
+    // alert에서 상태 추출 (details에 "연결", "실패", "미사용" 등)
     alerts.forEach(alert => {
       const deviceId = alert.metric;
-      const match = alert.details?.match(/연속 (\d+)회 실패/);
-      const failCount = match ? parseInt(match[1], 10) : 1;
-      
-      const current = statusMap.get(deviceId) || { failCount: 0 };
-      statusMap.set(deviceId, {
-        failCount: Math.max(current.failCount, failCount),
-        lastAlert: alert.details,
-      });
+      if (!statusMap.has(deviceId)) return;
+
+      const details = alert.details || '';
+      if (details.includes('연결')) {
+        statusMap.set(deviceId, 'connected');
+      } else if (details.includes('실패') || details.includes('미사용')) {
+        statusMap.set(deviceId, 'disconnected');
+      }
     });
-    
+
     return statusMap;
   }, [alerts]);
 
+  const stateConfig: Record<DeviceState, { label: string; color: string; bg: string; border: string; icon: ReactNode }> = {
+    connected: { label: '정상', color: '#4ade80', bg: '#052e16', border: '#166534', icon: <Wifi size={12} /> },
+    disconnected: { label: '연결 안됨', color: '#f87171', bg: '#450a0a', border: '#7f1d1d', icon: <WifiOff size={12} /> },
+    no_data: { label: '데이터없음', color: '#64748b', bg: '#0f172a', border: '#1e293b', icon: <HelpCircle size={12} /> },
+  };
+
   return (
     <div style={{
-      backgroundColor: '#1e293b',
-      borderRadius: '12px',
+      backgroundColor: '#111827',
+      borderRadius: '10px',
+      border: '1px solid #1f2937',
       padding: '16px',
-      marginBottom: '20px',
+      marginBottom: '12px',
     }}>
-      <h3 style={{ margin: '0 0 12px', fontSize: '14px', color: '#94a3b8' }}>
-        🔌 주변장치 연결 상태
+      <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 500, color: '#94a3b8' }}>
+        주변장치 연결 상태
       </h3>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-        gap: '12px',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+        gap: '8px',
       }}>
-        {DEFAULT_PERIPHERALS.map(device => {
-          const status = deviceStatus.get(device.id) || { failCount: 0 };
-          const isError = status.failCount >= 10;
-          const isWarning = status.failCount >= 3 && status.failCount < 10;
-          const isOk = status.failCount < 3;
-          
-          const bgColor = isError ? '#7f1d1d' : isWarning ? '#713f12' : '#14532d';
-          const borderColor = isError ? '#ef4444' : isWarning ? '#f59e0b' : '#22c55e';
-          const statusIcon = isError ? '❌' : isWarning ? '⚠️' : '✅';
-          const statusText = isError ? '연결 실패' : isWarning ? '불안정' : '정상';
-          
+        {PERIPHERALS.map(device => {
+          const state = deviceStatus.get(device.id) || 'no_data';
+          const cfg = stateConfig[state];
+
           return (
             <div
               key={device.id}
               style={{
-                backgroundColor: bgColor,
-                border: `1px solid ${borderColor}`,
+                backgroundColor: cfg.bg,
+                border: `1px solid ${cfg.border}`,
                 borderRadius: '8px',
-                padding: '12px',
+                padding: '10px',
                 textAlign: 'center',
-                transition: 'transform 0.2s',
               }}
             >
-              <div style={{ fontSize: '24px', marginBottom: '4px' }}>
+              <div style={{ color: cfg.color, marginBottom: '6px', display: 'flex', justifyContent: 'center' }}>
                 {device.icon}
               </div>
               <div style={{
-                fontSize: '12px',
-                fontWeight: 'bold',
+                fontSize: '11px',
+                fontWeight: 600,
                 color: '#e2e8f0',
-                marginBottom: '6px',
+                marginBottom: '4px',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -103,22 +105,13 @@ export function PeripheralCards({ alerts }: Props) {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: '4px',
-                fontSize: '11px',
-                color: isError ? '#fca5a5' : isWarning ? '#fcd34d' : '#86efac',
+                gap: '3px',
+                fontSize: '10px',
+                color: cfg.color,
               }}>
-                <span>{statusIcon}</span>
-                <span>{statusText}</span>
+                {cfg.icon}
+                <span>{cfg.label}</span>
               </div>
-              {status.failCount > 0 && (
-                <div style={{
-                  marginTop: '6px',
-                  fontSize: '10px',
-                  color: '#94a3b8',
-                }}>
-                  실패: {status.failCount}회
-                </div>
-              )}
             </div>
           );
         })}

@@ -165,12 +165,7 @@ export function Dashboard() {
   });
 
   // 잔차 영역: 두 라인 사이 band = lower(투명) + bandWidth(색상)
-  const bandLower = selectedArimaData.map((d, i) => {
-    const pred = d.arima_predicted ?? 0;
-    const act = arimaActual[i] ?? pred;
-    return Math.min(pred, act);
-  });
-  const bandWidth = selectedArimaData.map(() => 0).map((_, i) => Math.abs(selectedArimaData[i]?.arima_deviation || 0));
+  const bandWidth = selectedArimaData.map(d => Math.abs(d.arima_deviation || 0));
 
   // 상단/하단 y축 범위를 통일 → band 간격과 bar 높이가 같은 비율로 보임
   const allValues = [...arimaActual.filter((v): v is number => v != null), ...selectedArimaData.map(d => d.arima_predicted ?? 0), ...bandWidth];
@@ -193,14 +188,25 @@ export function Dashboard() {
       { type: 'value', gridIndex: 1, name: '잔차', min: 0, max: sharedMax, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     ],
     series: [
-      // Band: lower base (invisible)
-      { type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: bandLower, lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 }, stack: 'band', symbol: 'none', tooltip: { show: false } },
-      // Band: width (colored area between lines)
-      { name: '잔차 영역', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: bandWidth, lineStyle: { opacity: 0 }, areaStyle: { color: 'rgba(239, 68, 68, 0.12)' }, stack: 'band', symbol: 'none', tooltip: { show: false } },
-      // Actual line
-      { name: '실제값', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: arimaActual, itemStyle: { color: '#3b82f6' }, lineStyle: { width: 2 }, smooth: true, symbol: 'none' },
+      // Custom series: fill area between actual and predicted
+      {
+        type: 'custom', xAxisIndex: 0, yAxisIndex: 0, silent: true,
+        renderItem: (_params: any, api: any) => {
+          const idx = api.value(0);
+          if (idx >= arimaActual.length - 1) return;
+          const act0 = arimaActual[idx] ?? 0, act1 = arimaActual[idx + 1] ?? 0;
+          const pred0 = selectedArimaData[idx]?.arima_predicted ?? 0, pred1 = selectedArimaData[idx + 1]?.arima_predicted ?? 0;
+          const p0 = api.coord([idx, act0]), p1 = api.coord([idx, pred0]);
+          const p2 = api.coord([idx + 1, pred1]), p3 = api.coord([idx + 1, act1]);
+          return { type: 'polygon', shape: { points: [p0, p1, p2, p3] }, style: { fill: 'rgba(239, 68, 68, 0.12)' } };
+        },
+        data: arimaActual.map((_: any, i: number) => [i]),
+        tooltip: { show: false },
+      },
       // Predicted line
-      { name: '예측값', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: selectedArimaData.map(d => d.arima_predicted), itemStyle: { color: '#a78bfa' }, lineStyle: { width: 2, type: 'dashed' }, smooth: true, symbol: 'none' },
+      { name: '예측값', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: selectedArimaData.map(d => d.arima_predicted), itemStyle: { color: '#a78bfa' }, lineStyle: { width: 2, type: 'dashed' }, smooth: false, symbol: 'none' },
+      // Actual line
+      { name: '실제값', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: arimaActual, itemStyle: { color: '#3b82f6' }, lineStyle: { width: 2 }, smooth: false, symbol: 'none' },
       // Residual bar (bottom panel)
       {
         name: '잔차', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: bandWidth, barWidth: '50%',
@@ -266,8 +272,11 @@ export function Dashboard() {
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
       </div>
 
+      {/* Peripheral Status Cards */}
+      <PeripheralCards alerts={peripheralAlerts.map(a => ({ ...a, details: a.details || '' }))} />
+
       {/* Charts Row 2 - ARIMA */}
-      <div style={{ ...card, padding: '16px', marginBottom: '12px' }}>
+      <div style={{ ...card, padding: '16px', marginTop: '12px', marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
           {(arimaMetrics.length > 0 ? arimaMetrics : ['CPU', 'Memory', 'DiskIO']).map(m => (
             <button key={m} onClick={() => setArimaMetric(m)} style={{
@@ -280,9 +289,6 @@ export function Dashboard() {
         </div>
         <ReactECharts option={arimaChartOption} style={{ height: '400px' }} />
       </div>
-
-      {/* Peripheral Status Cards */}
-      <PeripheralCards alerts={peripheralAlerts.map(a => ({ ...a, details: a.details || '' }))} />
 
       {/* Detection Table */}
       <div style={{ ...card, padding: '16px', marginTop: '12px' }}>
