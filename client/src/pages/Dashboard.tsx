@@ -100,46 +100,74 @@ export function Dashboard() {
     };
   }, [viewMode, fetchMetrics, fetchDetections]);
 
+  const CHART_POINTS = 20;
+  const ecodMulti = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Multivariate').slice(-CHART_POINTS);
+  const ecodCpu = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'CPU').slice(-CHART_POINTS);
+  const ecodMem = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Memory').slice(-CHART_POINTS);
+  const ecodDisk = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'DiskIO').slice(-CHART_POINTS);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
   const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
   const peripheralAlerts = dbDetections.filter(d => d.engine === 'peripheral').slice(-20);
-  const cpuArimaData = arimaData.filter(d => d.metric === 'CPU');
+  const cpuArimaData = arimaData.filter(d => d.metric === 'CPU').slice(-CHART_POINTS);
   const latestDetections = dbDetections.slice(-10);
   const allDetections = dbDetections.slice(-30).reverse();
   const metricsCount = dbMetrics.length;
   const healthScore = dbHealthScore;
   const isConnected = dbConnected;
 
+  // 타임스탬프를 HH:mm:ss 형식으로 변환
+  const fmtTime = (ts: string) => {
+    try { return new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); }
+    catch { return ts; }
+  };
+
+  const chartTooltip = {
+    trigger: 'axis' as const,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderColor: '#334155',
+    textStyle: { color: '#e2e8f0', fontSize: 12 },
+  };
+
+  const chartGrid = { left: '8%', right: '8%', top: '15%', bottom: '20%' };
+
   const ecodChartOption = {
-    title: { text: `ECOD 다변량 이상 점수 (${viewMode === 'realtime' ? '실시간' : 'DB 전체'})`, left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
-    tooltip: { trigger: 'axis' },
-    legend: { bottom: 0, data: ['Multivariate', 'CPU', 'Memory', 'DiskIO'], textStyle: { color: '#94a3b8' } },
-    grid: { left: '10%', right: '5%', top: '18%', bottom: '18%' },
-    xAxis: { type: 'category', data: ecodData.filter(d => d.metric === 'Multivariate').map((_: InfluxDetection, i: number) => i + 1), axisLabel: { color: '#94a3b8' } },
-    yAxis: { type: 'value', name: 'Score', min: 0, max: 1, axisLabel: { color: '#94a3b8' }, nameTextStyle: { color: '#94a3b8' } },
+    title: { text: 'ECOD 다변량 이상 점수', left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
+    tooltip: chartTooltip,
+    legend: { bottom: 0, data: ['종합', 'CPU', 'Memory', 'DiskIO'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+    grid: chartGrid,
+    xAxis: { type: 'category', data: ecodMulti.map(d => fmtTime(d.timestamp)), axisLabel: { color: '#64748b', fontSize: 10, rotate: 30 }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#334155' } } },
+    yAxis: { type: 'value', name: 'Score', min: 0, max: 1, splitNumber: 4, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     series: [
-      { name: 'Multivariate', type: 'line', data: ecodData.filter(d => d.metric === 'Multivariate').map(d => d.score), itemStyle: { color: '#f43f5e' }, lineStyle: { width: 3 }, smooth: true, areaStyle: { color: 'rgba(244, 63, 94, 0.2)' } },
-      { name: 'CPU', type: 'line', data: ecodData.filter(d => d.metric === 'CPU').map(d => d.score), itemStyle: { color: '#3b82f6' }, smooth: true },
-      { name: 'Memory', type: 'line', data: ecodData.filter(d => d.metric === 'Memory').map(d => d.score), itemStyle: { color: '#22c55e' }, smooth: true },
-      { name: 'DiskIO', type: 'line', data: ecodData.filter(d => d.metric === 'DiskIO').map(d => d.score), itemStyle: { color: '#f59e0b' }, smooth: true },
+      { name: '종합', type: 'line', data: ecodMulti.map(d => d.score), itemStyle: { color: '#f43f5e' }, lineStyle: { width: 2.5 }, smooth: true, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(244, 63, 94, 0.3)' }, { offset: 1, color: 'rgba(244, 63, 94, 0.02)' }] } }, symbol: 'none' },
+      { name: 'CPU', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+      { name: 'Memory', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+      { name: 'DiskIO', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
     ],
   };
 
+  // ARIMA 타임스탬프로 metrics 실제값 매칭
+  const metricsMap = new Map(dbMetrics.map(m => [m.timestamp, m]));
+  const cpuArimaActual = cpuArimaData.map(d => {
+    const m = metricsMap.get(d.timestamp);
+    return m ? m.cpu : (d.arima_predicted != null && d.arima_deviation != null ? d.arima_predicted - d.arima_deviation : null);
+  });
+
   const arimaChartOption = {
-    title: { text: `AutoARIMA 예측 vs 실제 (${viewMode === 'realtime' ? '실시간' : 'DB 전체'})`, left: 'center', textStyle: { fontSize: 14, color: '#e2e8f0' } },
-    tooltip: { trigger: 'axis' },
-    legend: { bottom: 0, data: ['예측값', '잔차'], textStyle: { color: '#94a3b8' } },
-    grid: { left: '10%', right: '10%', top: '18%', bottom: '18%' },
-    xAxis: { type: 'category', data: cpuArimaData.map((_: InfluxDetection, i: number) => i + 1), axisLabel: { color: '#94a3b8' } },
+    title: { text: 'AutoARIMA 예측 vs 실제 (CPU)', left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
+    tooltip: chartTooltip,
+    legend: { bottom: 0, data: ['실제값', '예측값', '잔차'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+    grid: chartGrid,
+    xAxis: { type: 'category', data: cpuArimaData.map(d => fmtTime(d.timestamp)), axisLabel: { color: '#64748b', fontSize: 10, rotate: 30 }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#334155' } } },
     yAxis: [
-      { type: 'value', name: 'Value', position: 'left', axisLabel: { color: '#94a3b8' }, nameTextStyle: { color: '#94a3b8' } },
-      { type: 'value', name: 'Residual', position: 'right', axisLabel: { color: '#94a3b8' }, nameTextStyle: { color: '#94a3b8' } },
+      { type: 'value', name: 'CPU %', position: 'left', axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
+      { type: 'value', name: '잔차', position: 'right', axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { show: false } },
     ],
     series: [
-      { name: '예측값', type: 'line', data: cpuArimaData.map(d => d.arima_predicted), itemStyle: { color: '#8b5cf6' }, lineStyle: { type: 'dashed' }, smooth: true },
+      { name: '실제값', type: 'line', data: cpuArimaActual, itemStyle: { color: '#3b82f6' }, lineStyle: { width: 2 }, smooth: true, symbol: 'none' },
+      { name: '예측값', type: 'line', data: cpuArimaData.map(d => d.arima_predicted), itemStyle: { color: '#a78bfa' }, lineStyle: { width: 2, type: 'dashed' }, smooth: true, symbol: 'none' },
       {
-        name: '잔차', type: 'bar', yAxisIndex: 1, data: cpuArimaData.map(d => d.arima_deviation),
-        itemStyle: { color: (params: any) => { const th = cpuArimaData[params.dataIndex]?.threshold || 1; return params.value > th ? '#ef4444' : '#64748b'; } },
+        name: '잔차', type: 'bar', yAxisIndex: 1, data: cpuArimaData.map(d => d.arima_deviation), barWidth: '40%',
+        itemStyle: { color: (params: any) => { const th = cpuArimaData[params.dataIndex]?.threshold || 1; return params.value > th ? 'rgba(239, 68, 68, 0.7)' : 'rgba(100, 116, 139, 0.4)'; }, borderRadius: [2, 2, 0, 0] },
       },
     ],
   };

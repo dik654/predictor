@@ -224,14 +224,17 @@ class EnhancedAnomalyDetector:
                 percentile = np.sum(metric_data < value) / len(metric_data)
                 metric_score = abs(percentile - 0.5) * 2  # Distance from median
                 
+                p95 = float(np.percentile(metric_data, 95))
+                metric_severity = "warning" if metric_score > 0.8 else "normal"
                 results.append(AnomalyResult(
                     engine="ecod",
                     metric=name,
                     value=float(value),
                     score=float(metric_score),
-                    threshold=float(np.percentile(metric_data, 95)),
-                    severity="warning" if metric_score > 0.8 else "normal",
-                    confidence=confidence * 0.8,  # Slightly lower confidence for breakdown
+                    threshold=p95,
+                    severity=metric_severity,
+                    confidence=confidence * 0.8,
+                    details=f"value={value:.1f}, p95={p95:.1f}, score={metric_score:.3f}",
                 ))
             
         except Exception as e:
