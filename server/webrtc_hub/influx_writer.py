@@ -144,6 +144,8 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
             if store_info:
                 point.tag("store_code", str(store_info.get("StoreCode", "")))
                 point.tag("store_name", str(store_info.get("StoreName", "")))
+                point.tag("zip_code", str(store_info.get("ZipCode", "")))
+                point.tag("address", str(store_info.get("Address", "")))
                 point.tag("region_code", str(store_info.get("RegionCode", "")))
                 point.tag("region_name", str(store_info.get("RegionName", "")))
                 point.tag("pos_no", str(store_info.get("PosNo", "")))
@@ -157,17 +159,24 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
         if full_data:
             network = full_data.get("Network", {})
             if network:
-                point.field("network_sent", int(network.get("Sent", 0)))
-                point.field("network_recv", int(network.get("Recv", 0)))
+                point.field("network_sent_bytes", int(network.get("Sent", 0)))
+                point.field("network_received_bytes", int(network.get("Recv", 0)))
 
         # Add process status if available
         if full_data:
             process = full_data.get("Process", {})
             if process:
-                # Store main POS process status
-                pos_status = process.get("GSRTL.CVS.POS.Shell", "")
-                if pos_status:
-                    point.field("pos_process_status", 1 if pos_status == "RUNNING" else 0)
+                for proc_name, proc_status in process.items():
+                    point.field(f"process_{proc_name}", proc_status)
+
+        # Add FileVersions if available
+        if full_data:
+            file_versions = full_data.get("FileVersions", [])
+            for fv in file_versions:
+                file_name = fv.get("FileName", "")
+                file_version = fv.get("FileVersion", "")
+                if file_name and file_version:
+                    point.field(f"file_version_{file_name}", file_version)
 
         point.time(ts_to_use)
 
@@ -280,6 +289,7 @@ async def write_forecast(
     horizon_min: int,
     predicted_value: float,
     bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
 ) -> bool:
     """
     Write ARIMA forecast to InfluxDB.
@@ -315,8 +325,14 @@ async def write_forecast(
         point = Point("forecast") \
             .tag("agent_id", agent_id) \
             .tag("metric", metric) \
-            .tag("horizon_min", str(horizon_min)) \
-            .field("predicted_value", float(predicted_value)) \
+            .tag("horizon_min", str(horizon_min))
+
+        if store_info:
+            point.tag("store_code", str(store_info.get("StoreCode", "")))
+            point.tag("pos_no", str(store_info.get("PosNo", "")))
+            point.tag("region_code", str(store_info.get("RegionCode", "")))
+
+        point.field("predicted_value", float(predicted_value)) \
             .field("horizon_minutes", int(horizon_min)) \
             .time(ts_dt)
 
@@ -365,6 +381,7 @@ async def update_forecast_actual(
     forecast_value: float,
     error_pct: float,
     bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
 ) -> bool:
     """
     Update forecast with actual value and error percentage.
@@ -392,11 +409,18 @@ async def update_forecast_actual(
     try:
         point = Point("accuracy") \
             .tag("agent_id", agent_id) \
-            .tag("metric", metric) \
+            .tag("metric", metric)
+
+        if store_info:
+            point.tag("store_code", str(store_info.get("StoreCode", "")))
+            point.tag("pos_no", str(store_info.get("PosNo", "")))
+            point.tag("region_code", str(store_info.get("RegionCode", "")))
+
+        point \
             .tag("horizon_min", str(horizon_min)) \
             .field("actual_value", float(actual_value)) \
             .field("forecast_value", float(forecast_value)) \
-            .field("error_pct", float(error_pct)) \
+            .field("error_percent", float(error_pct)) \
             .field("within_3sigma", 1 if error_pct <= 3.0 else 0)
 
         # Run blocking write in thread pool to avoid blocking event loop
@@ -477,7 +501,7 @@ def get_latest_accuracy(
                         "horizon_min": horizon_min,
                         "actual_value": None,
                         "forecast_value": None,
-                        "error_pct": None,
+                        "error_percent": None,
                     }
 
                 # Accumulate values for each field
@@ -485,14 +509,14 @@ def get_latest_accuracy(
                     records_map[ts]["actual_value"] = float(value)
                 elif field == "forecast_value" and value is not None:
                     records_map[ts]["forecast_value"] = float(value)
-                elif field == "error_pct" and value is not None:
-                    records_map[ts]["error_pct"] = float(value)
+                elif field == "error_percent" and value is not None:
+                    records_map[ts]["error_percent"] = float(value)
                     errors.append(float(value))
                 elif field == "within_3sigma" and value == 1:
                     within_3sigma_count += 1
 
         # Convert map to list, only include records with error_pct
-        data["records"] = [r for r in records_map.values() if r["error_pct"] is not None]
+        data["records"] = [r for r in records_map.values() if r["error_percent"] is not None]
 
         log.info(f"✅ Query accuracy: agent={agent_id}, metric={metric}, horizon={horizon_min} -> {len(data['records'])} records with error_pct")
 
@@ -591,6 +615,7 @@ async def write_forecast_evaluation(
     model_ready: bool,
     data_source: str,
     bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
 ) -> bool:
     """
     Write forecast evaluation results to InfluxDB for persistence.
@@ -614,12 +639,19 @@ async def write_forecast_evaluation(
         for h in horizons:
             point = Point("forecast_evaluation") \
                 .tag("agent_id", agent_id) \
-                .tag("horizon_min", str(h.get("horizon_min", 0))) \
+                .tag("horizon_min", str(h.get("horizon_min", 0)))
+
+            if store_info:
+                point.tag("store_code", str(store_info.get("StoreCode", "")))
+                point.tag("pos_no", str(store_info.get("PosNo", "")))
+                point.tag("region_code", str(store_info.get("RegionCode", "")))
+
+            point \
                 .field("severity", h.get("severity", "normal")) \
                 .field("overall_severity", overall_severity) \
-                .field("pred_cpu", float(h.get("pred_cpu", 0))) \
-                .field("pred_memory", float(h.get("pred_memory", 0))) \
-                .field("pred_disk_io", float(h.get("pred_disk_io", 0))) \
+                .field("predicted_cpu", float(h.get("predicted_cpu", 0))) \
+                .field("predicted_memory", float(h.get("predicted_memory", 0))) \
+                .field("predicted_disk_io", float(h.get("predicted_disk_io", 0))) \
                 .field("ecod_score", float(h.get("ecod_score", 0))) \
                 .field("rule_score", float(h.get("rule_score", 0))) \
                 .field("final_score", float(h.get("final_score", 0))) \
@@ -633,8 +665,8 @@ async def write_forecast_evaluation(
             for fc in h.get("feature_contributions", []):
                 metric_key = fc.get("metric", "").lower().replace(" ", "_")
                 if metric_key:
-                    point.field(f"contrib_{metric_key}_pct", float(fc.get("pct", 0)))
-                    point.field(f"contrib_{metric_key}_score", float(fc.get("score", 0)))
+                    point.field(f"contribution_{metric_key}_percent", float(fc.get("pct", 0)))
+                    point.field(f"contribution_{metric_key}_score", float(fc.get("score", 0)))
             points.append(point)
 
         def _write():
@@ -722,12 +754,12 @@ def get_latest_forecast_evaluation(
                     h["severity"] = str(value)
                 elif field == "overall_severity" and value is not None:
                     overall_severity = str(value)
-                elif field == "pred_cpu" and value is not None:
-                    h["pred_cpu"] = float(value)
-                elif field == "pred_memory" and value is not None:
-                    h["pred_memory"] = float(value)
-                elif field == "pred_disk_io" and value is not None:
-                    h["pred_disk_io"] = float(value)
+                elif field == "predicted_cpu" and value is not None:
+                    h["predicted_cpu"] = float(value)
+                elif field == "predicted_memory" and value is not None:
+                    h["predicted_memory"] = float(value)
+                elif field == "predicted_disk_io" and value is not None:
+                    h["predicted_disk_io"] = float(value)
                 elif field == "ecod_score" and value is not None:
                     h["ecod_score"] = float(value)
                 elif field == "rule_score" and value is not None:
@@ -774,9 +806,9 @@ def get_latest_forecast_evaluation(
         horizons = sorted(horizons_map.values(), key=lambda x: x.get("horizon_min", 0))
         for h in horizons:
             h["horizon_label"] = _label(h.get("horizon_min", 0))
-            h.setdefault("pred_cpu", 0)
-            h.setdefault("pred_memory", 0)
-            h.setdefault("pred_disk_io", 0)
+            h.setdefault("predicted_cpu", 0)
+            h.setdefault("predicted_memory", 0)
+            h.setdefault("predicted_disk_io", 0)
             h.setdefault("ecod_score", 0)
             h.setdefault("rule_score", 0)
             h.setdefault("final_score", 0)
@@ -790,11 +822,11 @@ def get_latest_forecast_evaluation(
                 # Fill predicted_value from horizon data
                 for fc in fc_list:
                     if fc["metric"] == "CPU":
-                        fc["predicted_value"] = h["pred_cpu"]
+                        fc["predicted_value"] = h["predicted_cpu"]
                     elif fc["metric"] == "Memory":
-                        fc["predicted_value"] = h["pred_memory"]
+                        fc["predicted_value"] = h["predicted_memory"]
                     elif fc["metric"] == "DiskIO":
-                        fc["predicted_value"] = h["pred_disk_io"]
+                        fc["predicted_value"] = h["predicted_disk_io"]
                 h["feature_contributions"] = fc_list
             else:
                 h["feature_contributions"] = []
@@ -822,12 +854,13 @@ async def write_peripheral_status(
     timestamp: str,
     peripherals: Dict[str, str],
     bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
 ) -> bool:
     """
     Write peripheral device status to InfluxDB.
 
     Measurement: 'peripheral_status'
-    Tags: agent_id
+    Tags: agent_id, store_code, pos_no
     Fields: device name → status value (1=연결, 0=실패, -1=미사용)
     """
     global client, write_api
@@ -850,10 +883,17 @@ async def write_peripheral_status(
         point = Point("peripheral_status") \
             .tag("agent_id", agent_id)
 
+        # 매장/기기별 태그 추가
+        if store_info:
+            point.tag("store_code", str(store_info.get("StoreCode", "")))
+            point.tag("store_name", str(store_info.get("StoreName", "")))
+            point.tag("pos_no", str(store_info.get("PosNo", "")))
+            point.tag("region_code", str(store_info.get("RegionCode", "")))
+
         status_map = {"연결": 1, "실패": 0, "미사용": -1}
         for device, status in peripherals.items():
             point.field(device, status_map.get(status, -1))
-            point.field(f"{device}_raw", status)
+            point.field(f"{device}_raw_status", status)
 
         point.time(ts_dt)
 
@@ -886,6 +926,79 @@ async def write_peripheral_status(
         return False
 
 
+async def write_log_entry(
+    agent_id: str,
+    timestamp: str,
+    body_type: str,
+    key_values: Dict[str, str],
+    bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
+) -> bool:
+    """
+    Write non-peripheral log entries to InfluxDB.
+    BodyType: 승인 처리시간, 승인 처리결과, 영수증프린터 커버상태, 영수증 용지상태
+    """
+    global client, write_api
+
+    if not client or not write_api:
+        init_influx()
+        if not client or not write_api:
+            return False
+
+    if not key_values:
+        return True
+
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        try:
+            ts_dt = datetime.fromisoformat(ts_str)
+        except (ValueError, AttributeError):
+            ts_dt = datetime.utcnow()
+
+        point = Point("pos_logs") \
+            .tag("agent_id", agent_id) \
+            .tag("body_type", body_type)
+
+        if store_info:
+            point.tag("store_code", str(store_info.get("StoreCode", "")))
+            point.tag("store_name", str(store_info.get("StoreName", "")))
+            point.tag("pos_no", str(store_info.get("PosNo", "")))
+            point.tag("region_code", str(store_info.get("RegionCode", "")))
+
+        for k, v in key_values.items():
+            point.field(k, str(v))
+
+        point.time(ts_dt)
+
+        def _write():
+            line = point.to_line_protocol()
+            write_url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={bucket}"
+            req = urllib.request.Request(
+                write_url,
+                data=line.encode('utf-8'),
+                headers={
+                    "Authorization": f"Token {INFLUX_TOKEN}",
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status not in [200, 204]:
+                        return False
+            except urllib.error.HTTPError:
+                return False
+            return True
+
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(loop.run_in_executor(_write_executor, _write), timeout=10.0)
+
+    except Exception as e:
+        if "shutdown" not in str(e).lower():
+            log.warning(f"Failed to write log entry: {e}")
+        return False
+
+
 async def write_detection(
     agent_id: str,
     timestamp: str,
@@ -900,6 +1013,7 @@ async def write_detection(
     residual: float | None = None,
     details: str | None = None,
     bucket: str = INFLUX_BUCKET,
+    store_info: Dict = None,
 ) -> bool:
     """
     Write a single anomaly detection result to InfluxDB.
@@ -926,8 +1040,14 @@ async def write_detection(
             .tag("agent_id", agent_id) \
             .tag("engine", engine) \
             .tag("metric", metric) \
-            .tag("severity", severity) \
-            .field("value", float(value)) \
+            .tag("severity", severity)
+
+        if store_info:
+            point.tag("store_code", str(store_info.get("StoreCode", "")))
+            point.tag("pos_no", str(store_info.get("PosNo", "")))
+            point.tag("region_code", str(store_info.get("RegionCode", "")))
+
+        point.field("value", float(value)) \
             .field("score", float(score)) \
             .field("threshold", float(threshold)) \
             .field("confidence", float(confidence))
@@ -978,7 +1098,7 @@ def get_recent_metrics(
     """
     Query recent raw metrics from InfluxDB.
 
-    Returns list of dicts with timestamp, cpu, memory, disk_io, network_sent, network_recv.
+    Returns list of dicts with timestamp, cpu, memory, disk_io, network_sent, network_received.
     """
     target_bucket = bucket if bucket is not None else INFLUX_BUCKET
 
@@ -992,7 +1112,7 @@ def get_recent_metrics(
           |> filter(fn: (r) => r._measurement == "metrics")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
-              or r._field == "network_sent" or r._field == "network_recv")
+              or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
           |> sort(columns: ["_time"], desc: true)
           |> limit(n: {limit})
           |> sort(columns: ["_time"], desc: false)
@@ -1013,10 +1133,10 @@ def get_recent_metrics(
                         "timestamp": ts,
                         "agent_id": agent_id,
                         "cpu": 0, "memory": 0, "disk_io": 0,
-                        "network_sent": 0, "network_recv": 0,
+                        "network_sent_bytes": 0, "network_received_bytes": 0,
                     }
 
-                if field in ("cpu", "memory", "disk_io", "network_sent", "network_recv") and value is not None:
+                if field in ("cpu", "memory", "disk_io", "network_sent_bytes", "network_received_bytes") and value is not None:
                     records_map[ts][field] = float(value)
 
         records = sorted(records_map.values(), key=lambda x: x["timestamp"])

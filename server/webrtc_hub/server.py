@@ -221,6 +221,7 @@ def process_data(data: dict) -> dict:
 
     # Persist all detection results (ECOD, ARIMA, ensemble) to InfluxDB
     timestamp_str = data.get("Timestamp", "")
+    _store_info = data.get("StoreInfo", {})
     for d in result.detections:
         asyncio.create_task(influx_writer.write_detection(
             agent_id=agent_id,
@@ -236,11 +237,11 @@ def process_data(data: dict) -> dict:
             residual=float(d.residual) if d.residual is not None else None,
             details=d.details,
             bucket=influx_writer.INFLUX_BUCKET,
+            store_info=_store_info,
         ))
 
     if forecast_eval:
         result_dict["forecast_evaluation"] = forecast_eval
-        # Persist to InfluxDB for API retrieval after refresh/restart
         asyncio.create_task(influx_writer.write_forecast_evaluation(
             agent_id=agent_id,
             timestamp=timestamp_str,
@@ -249,6 +250,7 @@ def process_data(data: dict) -> dict:
             model_ready=forecast_eval.get("model_ready", False),
             data_source=forecast_eval.get("data_source", "none"),
             bucket=influx_writer.INFLUX_BUCKET,
+            store_info=_store_info,
         ))
 
     return result_dict
@@ -258,6 +260,12 @@ def process_data(data: dict) -> dict:
 def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
     """DataChannel 메시지 공통 처리 (client-created / server-created 채널 모두 사용)"""
     t = data.get("type")
+
+    # C# 에이전트가 type/payload 래핑 없이 직접 보내는 경우 자동 래핑
+    if t is None and data.get("AgentId"):
+        data = {"type": "data", "payload": data}
+        t = "data"
+
     log.info("MSG from %s: type=%s", client_id, t)
 
     if t == "hello":
@@ -314,16 +322,30 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
             channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
             return
 
+        store_info = payload.get("StoreInfo", {})
         for log_entry in payload.get("Logs", []):
-            if log_entry.get("BodyType") == "주변장치 체크":
-                peripherals = log_entry.get("KeyValues", {})
-                if peripherals:
-                    asyncio.create_task(influx_writer.write_peripheral_status(
-                        agent_id,
-                        payload.get("Timestamp", ""),
-                        peripherals,
-                        bucket=influx_writer.INFLUX_BUCKET,
-                    ))
+            body_type = log_entry.get("BodyType", "")
+            key_values = log_entry.get("KeyValues", {})
+            if not key_values:
+                continue
+            if body_type == "주변장치 체크":
+                asyncio.create_task(influx_writer.write_peripheral_status(
+                    agent_id,
+                    payload.get("Timestamp", ""),
+                    key_values,
+                    bucket=influx_writer.INFLUX_BUCKET,
+                    store_info=store_info,
+                ))
+            elif body_type:
+                # 승인 처리시간, 승인 처리결과, 영수증프린터 커버상태, 영수증 용지상태
+                asyncio.create_task(influx_writer.write_log_entry(
+                    agent_id,
+                    payload.get("Timestamp", ""),
+                    body_type,
+                    key_values,
+                    bucket=influx_writer.INFLUX_BUCKET,
+                    store_info=store_info,
+                ))
 
         if "CPU" not in payload:
             channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
@@ -354,7 +376,8 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
                         det.get("metric"),
                         fh.get("minutes"),
                         fh.get("value"),
-                        bucket=influx_writer.INFLUX_BUCKET
+                        bucket=influx_writer.INFLUX_BUCKET,
+                        store_info=store_info,
                     ))
                     tracker.record(
                         payload.get("AgentId"),
