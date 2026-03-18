@@ -36,6 +36,22 @@ _write_executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="influx-
 log.info("ThreadPoolExecutor initialized with 50 workers for InfluxDB writes")
 
 
+KST_OFFSET = timedelta(hours=9)
+
+
+def _parse_timestamp(timestamp: str) -> datetime:
+    """C# 에이전트 타임스탬프(KST, timezone-naive)를 UTC datetime으로 변환."""
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        ts_dt = datetime.fromisoformat(ts_str)
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt - KST_OFFSET
+        return ts_dt
+    except (ValueError, AttributeError):
+        log.warning(f"Failed to parse timestamp '{timestamp}', using current time")
+        return datetime.utcnow()
+
+
 def _apply_store_tags(point: Point, store_info: Dict) -> Point:
     """모든 measurement에 동일한 StoreInfo 태그를 적용하는 공통 헬퍼."""
     if store_info:
@@ -125,16 +141,7 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
 
     try:
         # Parse timestamp string to datetime object
-        KST_OFFSET = timedelta(hours=9)
-        try:
-            ts_str = timestamp.rstrip('Z') if timestamp else ""
-            ts_dt = datetime.fromisoformat(ts_str)
-            # C# 에이전트 타임스탬프는 KST → UTC로 변환
-            if ts_dt.tzinfo is None:
-                ts_dt = ts_dt - KST_OFFSET
-        except (ValueError, AttributeError) as te:
-            log.warning(f"Failed to parse timestamp '{timestamp}', using current time: {te}")
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         # Get nanosecond offset if provided (from sample_loader)
         # This ensures unique timestamps even when records have the same datetime
@@ -334,12 +341,7 @@ async def write_forecast(
 
     try:
         # Parse timestamp string to datetime object
-        try:
-            ts_str = timestamp.rstrip('Z') if timestamp else ""
-            ts_dt = datetime.fromisoformat(ts_str)
-        except (ValueError, AttributeError) as te:
-            log.warning(f"Failed to parse forecast timestamp '{timestamp}', using current time: {te}")
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         point = Point("arima_forecast") \
             .tag("agent_id", agent_id) \
@@ -644,11 +646,7 @@ async def write_forecast_evaluation(
             return False
 
     try:
-        ts_str = timestamp.rstrip('Z') if timestamp else ""
-        try:
-            ts_dt = datetime.fromisoformat(ts_str)
-        except (ValueError, AttributeError):
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         points = []
         for h in horizons:
@@ -886,11 +884,7 @@ async def write_peripheral_status(
         return True
 
     try:
-        ts_str = timestamp.rstrip('Z') if timestamp else ""
-        try:
-            ts_dt = datetime.fromisoformat(ts_str)
-        except (ValueError, AttributeError):
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         point = Point("peripheral_status") \
             .tag("agent_id", agent_id)
@@ -955,11 +949,7 @@ async def write_log_entry(
         return True
 
     try:
-        ts_str = timestamp.rstrip('Z') if timestamp else ""
-        try:
-            ts_dt = datetime.fromisoformat(ts_str)
-        except (ValueError, AttributeError):
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         point = Point("pos_logs") \
             .tag("agent_id", agent_id) \
@@ -1031,11 +1021,7 @@ async def write_detection(
             return False
 
     try:
-        ts_str = timestamp.rstrip('Z') if timestamp else ""
-        try:
-            ts_dt = datetime.fromisoformat(ts_str)
-        except (ValueError, AttributeError):
-            ts_dt = datetime.utcnow()
+        ts_dt = _parse_timestamp(timestamp)
 
         point = Point("anomaly_detection") \
             .tag("agent_id", agent_id) \
