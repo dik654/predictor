@@ -351,15 +351,22 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
             channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
             return
 
-        result = process_data(payload)
+        try:
+            result = process_data(payload)
+        except Exception as e:
+            log.error("process_data FAILED for %s: %s", agent_id, e, exc_info=True)
+            result = {"raw_metrics": {"CPU": payload.get("CPU", 0), "Memory": payload.get("Memory", 0), "DiskIO": payload.get("DiskIO", 0)}, "detections": []}
 
-        asyncio.create_task(influx_writer.write_metrics(
-            agent_id,
-            payload.get("Timestamp"),
-            result.get("raw_metrics", {}),
-            bucket=influx_writer.INFLUX_BUCKET,
-            full_data=payload
-        ))
+        try:
+            asyncio.create_task(influx_writer.write_metrics(
+                agent_id,
+                payload.get("Timestamp"),
+                result.get("raw_metrics", {}),
+                bucket=influx_writer.INFLUX_BUCKET,
+                full_data=payload
+            ))
+        except Exception as e:
+            log.error("write_metrics FAILED for %s: %s", agent_id, e, exc_info=True)
 
         asyncio.create_task(tracker.compare_actual_async(
             payload.get("AgentId"),
