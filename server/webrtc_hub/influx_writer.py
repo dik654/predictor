@@ -168,20 +168,15 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
                 point.field("network_sent_bytes", int(network.get("Sent", 0)))
                 point.field("network_received_bytes", int(network.get("Recv", 0)))
 
-        # Build separate points for string data (to avoid mean() aggregation errors on metrics)
-        extra_points = []
-
-        # Process status → separate measurement
+        # Process status → metrics에 숫자로 포함 (1=running, 0=stopped)
         if full_data:
             process = full_data.get("Process", {})
             if process:
-                proc_point = Point("process_status") \
-                    .tag("agent_id", agent_id)
-                _apply_store_tags(proc_point, full_data.get("StoreInfo", {}))
+                _proc_status_map = {"RUNNING": 1, "STOPPED": 0}
                 for proc_name, proc_status in process.items():
-                    proc_point.field(proc_name, str(proc_status))
-                proc_point.time(ts_to_use)
-                extra_points.append(proc_point)
+                    point.field(f"process_{proc_name}", _proc_status_map.get(str(proc_status).upper(), 0))
+
+        extra_points = []
 
         # FileVersions → separate measurement
         if full_data:
@@ -665,8 +660,9 @@ async def write_forecast_evaluation(
             _apply_store_tags(point, store_info)
 
             point \
-                .field("severity", h.get("severity", "normal")) \
-                .field("overall_severity", overall_severity) \
+                .tag("severity", h.get("severity", "normal")) \
+                .tag("overall_severity", overall_severity) \
+                .tag("data_source", data_source) \
                 .field("predicted_cpu", float(h.get("predicted_cpu", 0))) \
                 .field("predicted_memory", float(h.get("predicted_memory", 0))) \
                 .field("predicted_disk_io", float(h.get("predicted_disk_io", 0))) \
@@ -676,7 +672,6 @@ async def write_forecast_evaluation(
                 .field("reliability", float(h.get("reliability", 0))) \
                 .field("is_outlier", 1 if h.get("is_outlier") else 0) \
                 .field("model_ready", 1 if model_ready else 0) \
-                .field("data_source", data_source) \
                 .time(ts_dt)
 
             # Feature contributions (flattened)
@@ -1061,7 +1056,7 @@ async def write_detection(
         if residual is not None:
             point.field("residual", float(residual))
         if details:
-            point.field("details", str(details))
+            point.tag("details", str(details))
 
         point.time(ts_dt)
 
