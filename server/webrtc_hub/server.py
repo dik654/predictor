@@ -449,8 +449,8 @@ async def offer(request: web.Request) -> web.Response:
         @channel.on("message")
         def on_message(message):
             # RAW 로깅
-            raw = message if isinstance(message, str) else repr(message[:200])
-            log.info("RAW from %s: %s", client_id, raw[:500])
+            raw = message if isinstance(message, str) else repr(message)
+            log.info("RAW from %s: %s", client_id, raw)
 
             try:
                 data = json.loads(message) if isinstance(message, str) else {"type": "binary", "len": len(message)}
