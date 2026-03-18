@@ -36,6 +36,19 @@ _write_executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="influx-
 log.info("ThreadPoolExecutor initialized with 50 workers for InfluxDB writes")
 
 
+def _apply_store_tags(point: Point, store_info: Dict) -> Point:
+    """모든 measurement에 동일한 StoreInfo 태그를 적용하는 공통 헬퍼."""
+    if store_info:
+        point.tag("store_code", str(store_info.get("StoreCode", "")))
+        point.tag("store_name", str(store_info.get("StoreName", "")))
+        point.tag("zip_code", str(store_info.get("ZipCode", "")))
+        point.tag("address", str(store_info.get("Address", "")))
+        point.tag("region_code", str(store_info.get("RegionCode", "")))
+        point.tag("region_name", str(store_info.get("RegionName", "")))
+        point.tag("pos_no", str(store_info.get("PosNo", "")))
+    return point
+
+
 def init_influx():
     """Initialize InfluxDB connection."""
     global client, write_api, _last_reconnect
@@ -141,15 +154,7 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
 
         # Extract and add store information as tags if available
         if full_data:
-            store_info = full_data.get("StoreInfo", {})
-            if store_info:
-                point.tag("store_code", str(store_info.get("StoreCode", "")))
-                point.tag("store_name", str(store_info.get("StoreName", "")))
-                point.tag("zip_code", str(store_info.get("ZipCode", "")))
-                point.tag("address", str(store_info.get("Address", "")))
-                point.tag("region_code", str(store_info.get("RegionCode", "")))
-                point.tag("region_name", str(store_info.get("RegionName", "")))
-                point.tag("pos_no", str(store_info.get("PosNo", "")))
+            _apply_store_tags(point, full_data.get("StoreInfo", {}))
 
         # Add core metrics as fields
         point.field("cpu", float(raw_metrics.get("CPU", 0))) \
@@ -172,10 +177,7 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
             if process:
                 proc_point = Point("process_status") \
                     .tag("agent_id", agent_id)
-                if full_data.get("StoreInfo"):
-                    si = full_data["StoreInfo"]
-                    proc_point.tag("store_code", str(si.get("StoreCode", "")))
-                    proc_point.tag("pos_no", str(si.get("PosNo", "")))
+                _apply_store_tags(proc_point, full_data.get("StoreInfo", {}))
                 for proc_name, proc_status in process.items():
                     proc_point.field(proc_name, str(proc_status))
                 proc_point.time(ts_to_use)
@@ -187,10 +189,7 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
             if file_versions:
                 fv_point = Point("file_versions") \
                     .tag("agent_id", agent_id)
-                if full_data.get("StoreInfo"):
-                    si = full_data["StoreInfo"]
-                    fv_point.tag("store_code", str(si.get("StoreCode", "")))
-                    fv_point.tag("pos_no", str(si.get("PosNo", "")))
+                _apply_store_tags(fv_point, full_data.get("StoreInfo", {}))
                 for fv in file_versions:
                     file_name = fv.get("FileName", "")
                     file_version = fv.get("FileVersion", "")
@@ -352,10 +351,7 @@ async def write_forecast(
             .tag("metric", metric) \
             .tag("horizon_min", str(horizon_min))
 
-        if store_info:
-            point.tag("store_code", str(store_info.get("StoreCode", "")))
-            point.tag("pos_no", str(store_info.get("PosNo", "")))
-            point.tag("region_code", str(store_info.get("RegionCode", "")))
+        _apply_store_tags(point, store_info)
 
         point.field("predicted_value", float(predicted_value)) \
             .field("horizon_minutes", int(horizon_min)) \
@@ -666,10 +662,7 @@ async def write_forecast_evaluation(
                 .tag("agent_id", agent_id) \
                 .tag("horizon_min", str(h.get("horizon_min", 0)))
 
-            if store_info:
-                point.tag("store_code", str(store_info.get("StoreCode", "")))
-                point.tag("pos_no", str(store_info.get("PosNo", "")))
-                point.tag("region_code", str(store_info.get("RegionCode", "")))
+            _apply_store_tags(point, store_info)
 
             point \
                 .field("severity", h.get("severity", "normal")) \
@@ -907,13 +900,7 @@ async def write_peripheral_status(
 
         point = Point("peripheral_status") \
             .tag("agent_id", agent_id)
-
-        # 매장/기기별 태그 추가
-        if store_info:
-            point.tag("store_code", str(store_info.get("StoreCode", "")))
-            point.tag("store_name", str(store_info.get("StoreName", "")))
-            point.tag("pos_no", str(store_info.get("PosNo", "")))
-            point.tag("region_code", str(store_info.get("RegionCode", "")))
+        _apply_store_tags(point, store_info)
 
         status_map = {"연결": 1, "실패": 0, "미사용": -1}
         for device, status in peripherals.items():
@@ -983,12 +970,7 @@ async def write_log_entry(
         point = Point("pos_logs") \
             .tag("agent_id", agent_id) \
             .tag("body_type", body_type)
-
-        if store_info:
-            point.tag("store_code", str(store_info.get("StoreCode", "")))
-            point.tag("store_name", str(store_info.get("StoreName", "")))
-            point.tag("pos_no", str(store_info.get("PosNo", "")))
-            point.tag("region_code", str(store_info.get("RegionCode", "")))
+        _apply_store_tags(point, store_info)
 
         for k, v in key_values.items():
             point.field(k, str(v))
@@ -1067,10 +1049,7 @@ async def write_detection(
             .tag("metric", metric) \
             .tag("severity", severity)
 
-        if store_info:
-            point.tag("store_code", str(store_info.get("StoreCode", "")))
-            point.tag("pos_no", str(store_info.get("PosNo", "")))
-            point.tag("region_code", str(store_info.get("RegionCode", "")))
+        _apply_store_tags(point, store_info)
 
         point.field("value", float(value)) \
             .field("score", float(score)) \
