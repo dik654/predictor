@@ -53,7 +53,7 @@ ECOD / ARIMA / Ensemble 엔진의 이상 탐지 결과.
 | 구분  | 컬럼명             | 타입     | 설명                                    |
 |-------|-------------------|----------|-----------------------------------------|
 | Tag   | `engine`          | string   | 탐지 엔진 (ecod / arima / ensemble / peripheral) |
-| Tag   | `metric`          | string   | 메트릭 이름 (CPU / Memory / DiskIO 등)    |
+| Tag   | `metric`          | string   | 메트릭 이름 (Multivariate / CPU / Memory / DiskIO / NetworkSent / NetworkRecv / Process) |
 | Tag   | `severity`        | string   | 심각도 (normal / warning / critical)      |
 | Tag   | `details`         | string   | 상세 설명 (nullable)                      |
 | Field | `score`           | float    | 이상 점수                                |
