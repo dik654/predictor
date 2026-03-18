@@ -6,7 +6,7 @@ Stores raw metrics, ARIMA forecasts, and prediction accuracy.
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 import urllib.request
 import urllib.error
@@ -112,12 +112,13 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
 
     try:
         # Parse timestamp string to datetime object
+        KST_OFFSET = timedelta(hours=9)
         try:
             ts_str = timestamp.rstrip('Z') if timestamp else ""
             ts_dt = datetime.fromisoformat(ts_str)
-            # Log timestamp for diagnostics
-            if timestamp and "T" in timestamp:
-                log.debug(f"[TS-CHECK] {agent_id[:15]}: {timestamp}")
+            # C# 에이전트 타임스탬프는 KST → UTC로 변환
+            if ts_dt.tzinfo is None:
+                ts_dt = ts_dt - KST_OFFSET
         except (ValueError, AttributeError) as te:
             log.warning(f"Failed to parse timestamp '{timestamp}', using current time: {te}")
             ts_dt = datetime.utcnow()
