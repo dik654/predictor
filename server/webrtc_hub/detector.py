@@ -45,6 +45,7 @@ class MetricBuffer:
     disk_io: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     network_sent: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     network_recv: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    process_status: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     timestamps: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
 
 
@@ -124,11 +125,16 @@ class EnhancedAnomalyDetector:
         buf.cpu.append(data.get("CPU", 0))
         buf.memory.append(data.get("Memory", 0))
         buf.disk_io.append(data.get("DiskIO", 0))
-        
+
         network = data.get("Network", {})
         buf.network_sent.append(network.get("Sent", 0))
         buf.network_recv.append(network.get("Recv", 0))
-        
+
+        # Process status: 하나라도 RUNNING이면 1, 아니면 0
+        process = data.get("Process", {})
+        proc_val = 1 if any(v == "RUNNING" for v in process.values()) else 0
+        buf.process_status.append(proc_val)
+
         buf.timestamps.append(data.get("Timestamp", ""))
     
     def _get_dynamic_contamination(self, agent_id: str) -> float:
@@ -157,13 +163,16 @@ class EnhancedAnomalyDetector:
         results = []
         
         try:
-            # Combine metrics into multivariate array
+            # Combine metrics into multivariate array (6 features)
             cpu_arr = np.array(buf.cpu)
             mem_arr = np.array(buf.memory)
             disk_arr = np.array(buf.disk_io)
-            
+            net_sent_arr = np.array(buf.network_sent)
+            net_recv_arr = np.array(buf.network_recv)
+            proc_arr = np.array(buf.process_status)
+
             # Multivariate data matrix
-            X = np.column_stack([cpu_arr, mem_arr, disk_arr])
+            X = np.column_stack([cpu_arr, mem_arr, disk_arr, net_sent_arr, net_recv_arr, proc_arr])
             
             # Dynamic contamination
             contamination = self._get_dynamic_contamination(agent_id)
@@ -203,6 +212,13 @@ class EnhancedAnomalyDetector:
                 confidence = 1.0 - score_normalized
             
             # Create result for multivariate analysis
+            vals_summary = f"CPU={cpu_arr[-1]:.1f}%, Mem={mem_arr[-1]:.1f}%, Disk={disk_arr[-1]:.2f}, NetSent={net_sent_arr[-1]:.0f}, NetRecv={net_recv_arr[-1]:.0f}, Proc={'ON' if proc_arr[-1] else 'OFF'}"
+            if severity == "critical":
+                multi_details = f"복합 지표 이상 심각 (score={score_normalized:.2f}). {vals_summary}"
+            elif severity == "warning":
+                multi_details = f"복합 지표 이상 감지 (score={score_normalized:.2f}). {vals_summary}"
+            else:
+                multi_details = vals_summary
             results.append(AnomalyResult(
                 engine="ecod",
                 metric="Multivariate",
@@ -211,12 +227,12 @@ class EnhancedAnomalyDetector:
                 threshold=float(contamination),
                 severity=severity,
                 confidence=confidence,
-                details=f"CPU={cpu_arr[-1]:.1f}, Mem={mem_arr[-1]:.1f}, Disk={disk_arr[-1]:.2f}"
+                details=multi_details,
             ))
             
             # Also provide per-metric breakdown using feature contributions
-            metric_names = ["CPU", "Memory", "DiskIO"]
-            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1]]
+            metric_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process"]
+            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1], net_sent_arr[-1], net_recv_arr[-1], proc_arr[-1]]
             
             for i, (name, value) in enumerate(zip(metric_names, metric_values)):
                 # Simple univariate score approximation
@@ -226,6 +242,13 @@ class EnhancedAnomalyDetector:
                 
                 p95 = float(np.percentile(metric_data, 95))
                 metric_severity = "warning" if metric_score > 0.8 else "normal"
+                pct_rank = percentile * 100
+                unit = '%' if name in ('CPU', 'Memory') else ('bytes' if name.startswith('Network') else '')
+                val_str = f"{value:.0f}" if name in ('NetworkSent', 'NetworkRecv', 'Process') else f"{value:.1f}"
+                if metric_severity == "warning":
+                    metric_details = f"{name} {val_str}{unit} — 상위 {100 - pct_rank:.0f}% (p95={p95:.1f})"
+                else:
+                    metric_details = f"{name} {val_str}{unit} (상위 {100 - pct_rank:.0f}%)"
                 results.append(AnomalyResult(
                     engine="ecod",
                     metric=name,
@@ -234,7 +257,7 @@ class EnhancedAnomalyDetector:
                     threshold=p95,
                     severity=metric_severity,
                     confidence=confidence * 0.8,
-                    details=f"value={value:.1f}, p95={p95:.1f}, score={metric_score:.3f}",
+                    details=metric_details,
                 ))
             
         except Exception as e:
@@ -469,6 +492,12 @@ class EnhancedAnomalyDetector:
                 else:
                     fh["severity"] = "normal"
             
+            if severity == "critical":
+                arima_details = f"예측({forecast_value:.1f})과 실제({actual_value:.1f}) 차이 {residual:.1f} — 임계값({threshold:.1f})의 1.5배 초과"
+            elif severity == "warning":
+                arima_details = f"예측({forecast_value:.1f})과 실제({actual_value:.1f}) 차이 {residual:.1f} — 임계값({threshold:.1f}) 초과"
+            else:
+                arima_details = f"예측={forecast_value:.1f}, 실제={actual_value:.1f}, 차이={residual:.1f}"
             return AnomalyResult(
                 engine="arima",
                 metric=metric_name,
@@ -479,7 +508,7 @@ class EnhancedAnomalyDetector:
                 residual=float(residual),
                 severity=severity,
                 confidence=confidence,
-                details=f"Predicted: {forecast_value:.2f}, Actual: {actual_value:.2f}",
+                details=arima_details,
                 forecast_horizon=forecast_horizon,
             )
             
