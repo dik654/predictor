@@ -30,7 +30,7 @@ type ViewMode = 'db' | 'realtime';
 
 const MODE_CONFIG = {
   db:       { metricsLimit: 100, detectionsLimit: 200, pollInterval: 5_000 },
-  realtime: { metricsLimit: 20,  detectionsLimit: 50,  pollInterval: 2_000 },
+  realtime: { metricsLimit: 100, detectionsLimit: 200, pollInterval: 2_000 },
 } as const;
 
 export function Dashboard() {
