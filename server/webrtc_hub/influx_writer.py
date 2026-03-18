@@ -162,21 +162,41 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
                 point.field("network_sent_bytes", int(network.get("Sent", 0)))
                 point.field("network_received_bytes", int(network.get("Recv", 0)))
 
-        # Add process status if available
+        # Build separate points for string data (to avoid mean() aggregation errors on metrics)
+        extra_points = []
+
+        # Process status → separate measurement
         if full_data:
             process = full_data.get("Process", {})
             if process:
+                proc_point = Point("process_status") \
+                    .tag("agent_id", agent_id)
+                if full_data.get("StoreInfo"):
+                    si = full_data["StoreInfo"]
+                    proc_point.tag("store_code", str(si.get("StoreCode", "")))
+                    proc_point.tag("pos_no", str(si.get("PosNo", "")))
                 for proc_name, proc_status in process.items():
-                    point.field(f"process_{proc_name}", proc_status)
+                    proc_point.field(proc_name, str(proc_status))
+                proc_point.time(ts_to_use)
+                extra_points.append(proc_point)
 
-        # Add FileVersions if available
+        # FileVersions → separate measurement
         if full_data:
             file_versions = full_data.get("FileVersions", [])
-            for fv in file_versions:
-                file_name = fv.get("FileName", "")
-                file_version = fv.get("FileVersion", "")
-                if file_name and file_version:
-                    point.field(f"file_version_{file_name}", file_version)
+            if file_versions:
+                fv_point = Point("file_versions") \
+                    .tag("agent_id", agent_id)
+                if full_data.get("StoreInfo"):
+                    si = full_data["StoreInfo"]
+                    fv_point.tag("store_code", str(si.get("StoreCode", "")))
+                    fv_point.tag("pos_no", str(si.get("PosNo", "")))
+                for fv in file_versions:
+                    file_name = fv.get("FileName", "")
+                    file_version = fv.get("FileVersion", "")
+                    if file_name and file_version:
+                        fv_point.field(file_name, file_version)
+                fv_point.time(ts_to_use)
+                extra_points.append(fv_point)
 
         point.time(ts_to_use)
 
@@ -197,7 +217,11 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
                     return False
 
                 # Use Point.to_line_protocol() which handles timestamps correctly
-                line_protocol_str = point.to_line_protocol()
+                # Combine metrics point with extra points (file_versions, process_status)
+                all_lines = [point.to_line_protocol()]
+                for ep in extra_points:
+                    all_lines.append(ep.to_line_protocol())
+                line_protocol_str = "\n".join(all_lines)
 
                 # Log detailed data being written
                 cpu_val = raw_metrics.get('CPU', 0)

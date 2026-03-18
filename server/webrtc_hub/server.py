@@ -387,20 +387,6 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
                         fh.get("value")
                     )
 
-        channel.send(json.dumps(result, ensure_ascii=False))
-        asyncio.create_task(hub.broadcast_room("pulseai", result, exclude=client_id))
-
-        metrics_msg = {
-            "type": "metrics",
-            "agent_id": payload.get("AgentId", "unknown"),
-            "timestamp": payload.get("Timestamp", ""),
-            "cpu": payload.get("CPU", 0),
-            "memory": payload.get("Memory", 0),
-            "disk_io": payload.get("DiskIO", 0),
-            "network": payload.get("Network", {}),
-        }
-        asyncio.create_task(hub.broadcast_room("pulseai", metrics_msg, exclude=client_id))
-
         channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
         return
 
