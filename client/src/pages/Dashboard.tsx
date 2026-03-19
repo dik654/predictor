@@ -39,7 +39,7 @@ export function Dashboard() {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
   const [viewMode, setViewMode] = useState<ViewMode>('realtime');
   const [arimaMetric, setArimaMetric] = useState<string>('CPU');
-  const [ecodGroup, setEcodGroup] = useState<'system' | 'peripheral' | 'status'>('system');
+  const [ecodGroup, setEcodGroup] = useState<'all' | 'system' | 'peripheral' | 'status'>('all');
 
   const [dbMetrics, setDbMetrics] = useState<InfluxMetric[]>([]);
   const [dbDetections, setDbDetections] = useState<InfluxDetection[]>([]);
@@ -149,18 +149,35 @@ export function Dashboard() {
   const ecodChartOption = {
     title: { text: 'ECOD 다변량 이상 점수', left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
     tooltip: chartTooltip,
-    legend: { bottom: 0, data: ecodGroup === 'system'
+    legend: { bottom: 0, data: ecodGroup === 'all'
+      ? ['종합', 'CPU', '메모리', '디스크IO', '네트워크 송신', '네트워크 수신', '동글', '핸드스캐너', '여권리더기', '2D스캐너', '충전기', '키보드', 'MSR', '프로세스', 'POS유휴']
+      : ecodGroup === 'system'
       ? ['종합', 'CPU 사용률', '메모리 사용률', '디스크 사용률', '네트워크 송신', '네트워크 수신']
       : ecodGroup === 'peripheral'
       ? ['종합', '동글', '핸드스캐너', '여권리더기', '2D스캐너', '충전기', '키보드', 'MSR']
       : ['종합', '프로세스 상태', 'POS 유휴 상태'],
-      textStyle: { color: '#cbd5e1', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+      textStyle: { color: '#cbd5e1', fontSize: 10 }, itemWidth: 10, itemHeight: 6, itemGap: 8, type: 'scroll' as any },
     grid: chartGrid,
     xAxis: { type: 'category', data: ecodMulti.map(d => fmtTime(d.timestamp)), axisLabel: { color: '#64748b', fontSize: 10, rotate: 30 }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#1f2937' } } },
     yAxis: { type: 'value', name: 'Score', min: 0, max: 1, splitNumber: 4, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     series: [
       { name: '종합', type: 'line', data: ecodMulti.map(d => d.score), itemStyle: { color: '#f43f5e' }, lineStyle: { width: 2.5 }, smooth: true, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(244, 63, 94, 0.3)' }, { offset: 1, color: 'rgba(244, 63, 94, 0.02)' }] } }, symbol: 'none' },
-      ...(ecodGroup === 'system' ? [
+      ...(ecodGroup === 'all' ? [
+        { name: 'CPU', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1 }, smooth: true, symbol: 'none' },
+        { name: '메모리', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1 }, smooth: true, symbol: 'none' },
+        { name: '디스크IO', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1 }, smooth: true, symbol: 'none' },
+        { name: '네트워크 송신', type: 'line', data: ecodNetSent.map(d => d.score), itemStyle: { color: '#06b6d4' }, lineStyle: { width: 1 }, smooth: true, symbol: 'none' },
+        { name: '네트워크 수신', type: 'line', data: ecodNetRecv.map(d => d.score), itemStyle: { color: '#14b8a6' }, lineStyle: { width: 1 }, smooth: true, symbol: 'none' },
+        { name: '동글', type: 'line', data: ecodDongle.map(d => d.score), itemStyle: { color: '#f472b6' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '핸드스캐너', type: 'line', data: ecodHandScanner.map(d => d.score), itemStyle: { color: '#fb923c' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '여권리더기', type: 'line', data: ecodPassport.map(d => d.score), itemStyle: { color: '#a3e635' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '2D스캐너', type: 'line', data: ecod2dScanner.map(d => d.score), itemStyle: { color: '#38bdf8' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '충전기', type: 'line', data: ecodPhoneCharger.map(d => d.score), itemStyle: { color: '#818cf8' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '키보드', type: 'line', data: ecodKeyboard.map(d => d.score), itemStyle: { color: '#fbbf24' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: 'MSR', type: 'line', data: ecodMsr.map(d => d.score), itemStyle: { color: '#34d399' }, lineStyle: { width: 1, type: 'dashed' }, smooth: true, symbol: 'none' },
+        { name: '프로세스', type: 'line', data: ecodProc.map(d => d.score), itemStyle: { color: '#ec4899' }, lineStyle: { width: 1, type: 'dotted' }, smooth: true, symbol: 'none' },
+        { name: 'POS유휴', type: 'line', data: ecodIdle.map(d => d.score), itemStyle: { color: '#a78bfa' }, lineStyle: { width: 1, type: 'dotted' }, smooth: true, symbol: 'none' },
+      ] : ecodGroup === 'system' ? [
         { name: 'CPU 사용률', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
         { name: '메모리 사용률', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
         { name: '디스크 사용률', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
@@ -297,7 +314,7 @@ export function Dashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
         <div style={{ ...card, padding: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
-            {([['system', '시스템'], ['peripheral', '주변장치'], ['status', '상태']] as const).map(([key, label]) => (
+            {([['all', '전체'], ['system', '시스템'], ['peripheral', '주변장치'], ['status', '상태']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setEcodGroup(key)} style={{
                 padding: '3px 10px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
                 borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',

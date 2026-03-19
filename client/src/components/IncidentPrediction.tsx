@@ -122,7 +122,23 @@ const METRIC_KO: Record<string, string> = {
   DiskIO: '디스크 사용률',
   NetworkSent: '네트워크 송신량',
   NetworkRecv: '네트워크 수신량',
+  Process: '프로세스 상태',
+  Dongle: '동글',
+  HandScanner: '핸드스캐너',
+  PassportReader: '여권리더기',
+  '2DScanner': '2D 스캐너',
+  PhoneCharger: '충전기',
+  Keyboard: '키보드',
+  MSR: 'MSR 카드리더기',
+  POS_Idle: 'POS 유휴 상태',
 };
+
+// 표시 순서: 시스템 메트릭 → 주변장치 → 상태
+const METRIC_ORDER: string[] = [
+  'CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv',
+  'Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR',
+  'Process', 'POS_Idle',
+];
 
 const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; unit: string }> = {
   CPU: { warning: 80, critical: 90, unit: '%' },
@@ -130,6 +146,16 @@ const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; uni
   DiskIO: { warning: 70, critical: 85, unit: '' },
   NetworkSent: { warning: 50000, critical: 100000, unit: 'B' },
   NetworkRecv: { warning: 50000, critical: 100000, unit: 'B' },
+  // 이산값: 0=실패, 1=정상
+  Dongle: { warning: 0.5, critical: 0, unit: '' },
+  HandScanner: { warning: 0.5, critical: 0, unit: '' },
+  '2DScanner': { warning: 0.5, critical: 0, unit: '' },
+  PassportReader: { warning: 0.5, critical: 0, unit: '' },
+  PhoneCharger: { warning: 0.5, critical: 0, unit: '' },
+  Keyboard: { warning: 0.5, critical: 0, unit: '' },
+  MSR: { warning: 0.5, critical: 0, unit: '' },
+  Process: { warning: 0.5, critical: 0, unit: '' },
+  POS_Idle: { warning: 0.5, critical: 0, unit: '' },
 };
 
 function horizonLabel(min: number): string {
@@ -223,13 +249,13 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
         recommendation={recommendation}
       />
 
-      {/* 2. 미래 예측 + 원인 분해 (좌: 1-미래예측, 우: 2-원인분해) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <MetricTrendCard trends={metricTrends} horizons={horizons} />
-        <FeatureBreakdown worst={worst} horizons={horizons} />
-      </div>
+      {/* 2. 미래 예측 수치 (전체 폭) */}
+      <MetricTrendCard trends={metricTrends} horizons={horizons} />
 
-      {/* 3. 최종 위험도 + 시간대별 차트 */}
+      {/* 3. 이상 원인 분해 (전체 폭) */}
+      <FeatureBreakdown worst={worst} horizons={horizons} />
+
+      {/* 4. 최종 위험도 + 시간대별 차트 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <RiskCalculationCard horizons={horizons} />
         <RiskTimelineChart horizons={horizons} />
@@ -322,7 +348,13 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
     horizons.findIndex(h => h.horizon_min === worst.horizon_min)
   );
   const selected = horizons[selectedIdx] || worst;
-  const contribs = selected.feature_contributions || [];
+  const rawContribs = selected.feature_contributions || [];
+  // METRIC_ORDER 순서로 정렬, 없는 것은 뒤로
+  const contribs = [...rawContribs].sort((a, b) => {
+    const ai = METRIC_ORDER.indexOf(a.metric);
+    const bi = METRIC_ORDER.indexOf(b.metric);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
 
   if (contribs.length === 0) {
     return (
@@ -338,7 +370,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>2 - 이상 원인 분해</h4>
+        <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>3 - 이상 원인 분해 (ECOD)</h4>
         <div style={{ display: 'flex', gap: 3 }}>
           {horizons.map((h, i) => (
             <button key={h.horizon_min} onClick={() => setSelectedIdx(i)} style={{
@@ -420,8 +452,9 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
                 </span>
                 {threshold && (
                   <span>
-                    주의 <span style={{ color: '#f59e0b' }}>{threshold.warning}{unit}</span>
-                    {' / '}위험 <span style={{ color: '#ef4444' }}>{threshold.critical}{unit}</span>
+                    {threshold.critical === 0
+                      ? <><span style={{ color: '#22c55e' }}>1=정상</span> / <span style={{ color: '#ef4444' }}>0=실패</span></>
+                      : <>주의 <span style={{ color: '#f59e0b' }}>{threshold.warning}{unit}</span>{' / '}위험 <span style={{ color: '#ef4444' }}>{threshold.critical}{unit}</span></>}
                   </span>
                 )}
               </div>
@@ -482,7 +515,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
       {/* STEP 1: 미래 예측값 */}
       <div>
         <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
-          1 - 미래 예측 수치
+          1 - 미래 예측 수치 (ARIMA)
         </h4>
         <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           과거 패턴 기반 ARIMA 예측. 노란색=주의 구간, 빨간색=위험 구간.
@@ -500,7 +533,9 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {threshold && (
                       <span style={{ fontSize: 11, color: '#cbd5e1' }}>
-                        주의 {threshold.warning}{unit} / 위험 {threshold.critical}{unit}
+                        {threshold.critical === 0
+                          ? '1=정상 / 0=실패'
+                          : `주의 ${threshold.warning}${unit} / 위험 ${threshold.critical}${unit}`}
                       </span>
                     )}
                     <span style={{
@@ -561,7 +596,7 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
       <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
-        3 - 최종 위험도 계산
+        4 - 최종 위험도 (ECOD x 신뢰도)
       </h4>
         <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           이상 점수 x 신뢰도 = 위험도. 먼 미래일수록 신뢰도가 낮아져 위험도가 보정됩니다.
@@ -744,7 +779,7 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
 
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
-      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>3 - 시간대별 예측값 및 위험도</h4>
+      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>5 - 시간대별 예측값 및 위험도</h4>
       <ReactECharts option={option} style={{ height: 300 }} />
     </div>
   );
