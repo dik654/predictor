@@ -119,7 +119,7 @@ interface IncidentPredictionProps {
 const METRIC_KO: Record<string, string> = {
   CPU: 'CPU 사용률',
   Memory: '메모리 사용률',
-  DiskIO: '디스크 사용률',
+  DiskIO: '디스크IO',
   NetworkSent: '네트워크 송신량',
   NetworkRecv: '네트워크 수신량',
   Process: '프로세스 상태',
@@ -247,18 +247,18 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      {/* 1. 핵심 요약 카드 — "언제, 뭐가, 왜" */}
-      <SummaryCard
-        evaluation={{ ...evaluation, overall_severity: overallSeverity }}
-        worst={worst}
-        isRisky={isRisky}
-        topFeature={topFeature}
-        earliestRisk={earliestRisk}
-        recommendation={recommendation}
-      />
-
-      {/* 2. 미래 예측 수치 (전체 폭) */}
-      <MetricTrendCard trends={metricTrends} horizons={horizons} />
+      {/* 1. 핵심 요약 + 2. 미래 예측 수치 (좌우) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <SummaryCard
+          evaluation={{ ...evaluation, overall_severity: overallSeverity }}
+          worst={worst}
+          isRisky={isRisky}
+          topFeature={topFeature}
+          earliestRisk={earliestRisk}
+          recommendation={recommendation}
+        />
+        <MetricTrendCard trends={metricTrends} horizons={horizons} />
+      </div>
 
       {/* 3. 이상 원인 분해 (전체 폭) */}
       <FeatureBreakdown worst={worst} horizons={horizons} />
@@ -357,13 +357,16 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
   );
   const selected = horizons[selectedIdx] || worst;
   const rawContribs = selected.feature_contributions || [];
-  // METRIC_ORDER 순서로 정렬 (대소문자 무시 매칭)
-  const contribs = [...rawContribs].sort((a, b) => {
-    const findIdx = (m: string) => METRIC_ORDER.findIndex(o => o.toLowerCase() === m.toLowerCase());
-    const ai = findIdx(a.metric);
-    const bi = findIdx(b.metric);
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-  });
+  // 연속값만 표시 (이산값은 개별 점수가 무의미)
+  const CONTINUOUS_METRICS = ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv'];
+  const contribs = [...rawContribs]
+    .filter(c => CONTINUOUS_METRICS.some(m => m.toLowerCase() === c.metric.toLowerCase()))
+    .sort((a, b) => {
+      const findIdx = (m: string) => METRIC_ORDER.findIndex(o => o.toLowerCase() === m.toLowerCase());
+      const ai = findIdx(a.metric);
+      const bi = findIdx(b.metric);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
 
   if (contribs.length === 0) {
     return (
@@ -393,7 +396,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
         </div>
       </div>
       <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
-        {horizonLabel(selected.horizon_min)} 예측값을 과거 7일과 비교하여, 평소와 가장 다른 지표 순으로 보여줍니다.
+        평소와 가장 다른 지표 순으로 보여줍니다.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {contribs.map((fc, idx) => {

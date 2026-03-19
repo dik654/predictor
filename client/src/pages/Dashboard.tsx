@@ -148,7 +148,7 @@ export function Dashboard() {
     legend: { bottom: 0, data: ecodGroup === 'all'
       ? ['종합', 'CPU', '메모리', '디스크IO', '네트워크 송신', '네트워크 수신', '동글', '핸드스캐너', '여권리더기', '2D스캐너', '충전기', '키보드', 'MSR', '프로세스', 'POS유휴']
       : ecodGroup === 'system'
-      ? ['종합', 'CPU 사용률', '메모리 사용률', '디스크 사용률', '네트워크 송신', '네트워크 수신']
+      ? ['종합', 'CPU 사용률', '메모리 사용률', '디스크IO', '네트워크 송신', '네트워크 수신']
       : ecodGroup === 'peripheral'
       ? ['종합', '동글', '핸드스캐너', '여권리더기', '2D스캐너', '충전기', '키보드', 'MSR']
       : ['종합', '프로세스 상태', 'POS 유휴 상태'],
@@ -176,7 +176,7 @@ export function Dashboard() {
       ] : ecodGroup === 'system' ? [
         { name: 'CPU 사용률', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
         { name: '메모리 사용률', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-        { name: '디스크 사용률', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: '디스크IO', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
         { name: '네트워크 송신', type: 'line', data: ecodNetSent.map(d => d.score), itemStyle: { color: '#06b6d4' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
         { name: '네트워크 수신', type: 'line', data: ecodNetRecv.map(d => d.score), itemStyle: { color: '#14b8a6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
       ] : ecodGroup === 'peripheral' ? [
