@@ -247,23 +247,23 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      {/* 1. 핵심 요약 + 2. 미래 예측 수치 (좌우) */}
+      {/* 핵심 요약 (전체 폭) */}
+      <SummaryCard
+        evaluation={{ ...evaluation, overall_severity: overallSeverity }}
+        worst={worst}
+        isRisky={isRisky}
+        topFeature={topFeature}
+        earliestRisk={earliestRisk}
+        recommendation={recommendation}
+      />
+
+      {/* 1-미래예측 + 2-이상원인 (좌우) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <SummaryCard
-          evaluation={{ ...evaluation, overall_severity: overallSeverity }}
-          worst={worst}
-          isRisky={isRisky}
-          topFeature={topFeature}
-          earliestRisk={earliestRisk}
-          recommendation={recommendation}
-        />
         <MetricTrendCard trends={metricTrends} horizons={horizons} />
+        <FeatureBreakdown worst={worst} horizons={horizons} />
       </div>
 
-      {/* 3. 이상 원인 분해 (전체 폭) */}
-      <FeatureBreakdown worst={worst} horizons={horizons} />
-
-      {/* 4. 최종 위험도 + 시간대별 차트 */}
+      {/* 3-최종위험도 + 4-시간대별차트 (좌우) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <RiskCalculationCard horizons={horizons} />
         <RiskTimelineChart horizons={horizons} />
@@ -305,43 +305,35 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
   return (
     <div style={{
       backgroundColor: sev.bg, border: `1px solid ${sev.border}`,
-      borderRadius: 12, padding: '20px 24px',
+      borderRadius: 10, padding: '12px 20px',
     }}>
-      {/* 한줄 요약 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: isRisky ? 16 : 0 }}>
-        <span style={{ fontSize: 32 }}>{sev.emoji}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <sev.icon size={20} color={sev.color} />
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: sev.color }}>{headline}</div>
-          <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 4 }}>
-            {evaluation.agent_id} | 기준 시점: {new Date(evaluation.timestamp).toLocaleString('ko-KR')}
-            {' | '}데이터: {evaluation.data_source === 'influxdb' ? '최근 7일' : evaluation.data_source === 'buffer' ? '버퍼' : '대기중'}
+          <div style={{ fontSize: 15, fontWeight: 700, color: sev.color }}>{headline}</div>
+          <div style={{ fontSize: 11, color: '#cbd5e1', marginTop: 2 }}>
+            {evaluation.agent_id} | {new Date(evaluation.timestamp).toLocaleString('ko-KR')} | {evaluation.data_source === 'influxdb' ? '최근 7일' : evaluation.data_source === 'buffer' ? '버퍼' : '대기중'}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: sev.color }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: sev.color }}>
             {(worst.final_score * 100).toFixed(0)}%
           </div>
-          <div style={{ fontSize: 11, color: '#cbd5e1' }}>최대 위험도</div>
+          <div style={{ fontSize: 10, color: '#cbd5e1' }}>최대 위험도</div>
         </div>
       </div>
-
-      {/* 위험 시 상세 설명 */}
       {isRisky && (
         <div style={{
-          backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '12px 16px',
-          fontSize: 14, lineHeight: 1.6, color: '#e2e8f0',
+          backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: '8px 12px', marginTop: 8,
+          fontSize: 12, lineHeight: 1.5, color: '#e2e8f0',
         }}>
           {topFeature && (
-            <div style={{ marginBottom: 8 }}>
-              <strong style={{ color: sev.color }}>원인:</strong>{' '}
-              {metricKo(topFeature.metric)}이(가)
-              예측값 <strong>{topFeature.predicted_value.toFixed(1)}</strong>로
-              정상 범위를 벗어날 가능성 (기여도 {topFeature.pct.toFixed(0)}%)
-            </div>
+            <span>
+              <strong style={{ color: sev.color }}>원인:</strong> {metricKo(topFeature.metric)} 예측값 {topFeature.predicted_value.toFixed(1)} (기여도 {topFeature.pct.toFixed(0)}%)
+            </span>
           )}
-          <div>
-            <strong style={{ color: '#38bdf8' }}>권장 조치:</strong> {recommendation}
-          </div>
+          {topFeature && ' · '}
+          <strong style={{ color: '#38bdf8' }}>조치:</strong> {recommendation}
         </div>
       )}
     </div>
@@ -382,7 +374,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>3 - 이상 원인 분해 (ECOD)</h4>
+        <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>2 - 이상 원인 분해 (ECOD)</h4>
         <div style={{ display: 'flex', gap: 3 }}>
           {horizons.map((h, i) => (
             <button key={h.horizon_min} onClick={() => setSelectedIdx(i)} style={{
@@ -608,7 +600,7 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
       <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
-        4 - 최종 위험도 (ECOD x 신뢰도)
+        3 - 최종 위험도 (ECOD x 신뢰도)
       </h4>
         <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           이상 점수 x 신뢰도 = 위험도. 먼 미래일수록 신뢰도가 낮아져 위험도가 보정됩니다.
@@ -791,7 +783,7 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
 
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
-      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>5 - 시간대별 예측값 및 위험도</h4>
+      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>4 - 시간대별 예측값 및 위험도</h4>
       <ReactECharts option={option} style={{ height: 300 }} />
     </div>
   );
