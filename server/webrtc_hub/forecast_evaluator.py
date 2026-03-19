@@ -78,8 +78,8 @@ class HorizonEvaluation:
     pred_cpu: float
     pred_memory: float
     pred_disk_io: float
-    pred_network_sent: float = 0.0
-    pred_network_recv: float = 0.0
+    pred_network_sent: float
+    pred_network_recv: float
     ecod_score: float           # 0-1, from long-term ECOD
     rule_score: float           # 0-1, from binary feature rules
     combined_score: float       # weighted combination
