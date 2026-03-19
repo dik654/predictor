@@ -19,7 +19,7 @@ const stateConfig: Record<DeviceState, { label: string; color: string; bg: strin
   connected:    { label: '연결',   color: '#4ade80', bg: '#052e16', border: '#166534', icon: <Wifi size={12} /> },
   disconnected: { label: '미연결', color: '#f87171', bg: '#450a0a', border: '#7f1d1d', icon: <WifiOff size={12} /> },
   unused:       { label: '미사용', color: '#a78bfa', bg: '#1e1b4b', border: '#3730a3', icon: <HelpCircle size={12} /> },
-  no_data:      { label: '미전송', color: '#64748b', bg: '#0f172a', border: '#1e293b', icon: <HelpCircle size={12} /> },
+  no_data:      { label: '미전송', color: '#94a3b8', bg: '#1e293b', border: '#334155', icon: <HelpCircle size={12} /> },
 };
 
 function toState(value: number | null | undefined): DeviceState {
@@ -70,13 +70,13 @@ export function PeripheralCards() {
       padding: '16px',
       marginBottom: '12px',
     }}>
-      <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 500, color: '#94a3b8' }}>
+      <h3 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: 500, color: '#cbd5e1' }}>
         주변장치 연결 상태
       </h3>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-        gap: '8px',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+        gap: '10px',
       }}>
         {PERIPHERALS.map(device => {
           const deviceData = devices[device.id];
@@ -91,7 +91,7 @@ export function PeripheralCards() {
                 backgroundColor: cfg.bg,
                 border: `1px solid ${cfg.border}`,
                 borderRadius: '8px',
-                padding: '10px',
+                padding: '14px 12px',
                 textAlign: 'center',
               }}
             >
@@ -114,14 +114,14 @@ export function PeripheralCards() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '3px',
-                fontSize: '10px',
+                fontSize: '11px',
                 color: cfg.color,
               }}>
                 {cfg.icon}
                 <span>{cfg.label}</span>
               </div>
               {sinceText && (
-                <div style={{ fontSize: '8px', color: '#94a3b8', marginTop: '3px' }}>
+                <div style={{ fontSize: '8px', color: '#cbd5e1', marginTop: '3px' }}>
                   {sinceText}
                 </div>
               )}

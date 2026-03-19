@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, Clock, TrendingUp } from 'lucide-react';
 
@@ -84,6 +84,8 @@ interface HorizonData {
   pred_cpu: number;
   pred_memory: number;
   pred_disk_io: number;
+  pred_network_sent?: number;
+  pred_network_recv?: number;
   ecod_score: number;
   rule_score: number;
   final_score: number;
@@ -117,13 +119,17 @@ interface IncidentPredictionProps {
 const METRIC_KO: Record<string, string> = {
   CPU: 'CPU 사용률',
   Memory: '메모리 사용률',
-  DiskIO: '디스크 I/O',
+  DiskIO: '디스크 사용률',
+  NetworkSent: '네트워크 송신량',
+  NetworkRecv: '네트워크 수신량',
 };
 
 const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; unit: string }> = {
   CPU: { warning: 80, critical: 90, unit: '%' },
   Memory: { warning: 85, critical: 95, unit: '%' },
   DiskIO: { warning: 70, critical: 85, unit: '' },
+  NetworkSent: { warning: 50000, critical: 100000, unit: 'B' },
+  NetworkRecv: { warning: 50000, critical: 100000, unit: 'B' },
 };
 
 function horizonLabel(min: number): string {
@@ -187,7 +193,7 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
     return (
       <div style={{
         backgroundColor: '#1e293b', borderRadius: 12, padding: 32,
-        textAlign: 'center', color: '#94a3b8',
+        textAlign: 'center', color: '#cbd5e1',
       }}>
         <Shield size={48} style={{ margin: '0 auto 16px', opacity: 0.4 }} />
         <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>사고 예측 대기 중</div>
@@ -217,10 +223,10 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
         recommendation={recommendation}
       />
 
-      {/* 2. 원인 분해 — feature별 기여도 + 메트릭 추세 */}
+      {/* 2. 미래 예측 + 원인 분해 (좌: 1-미래예측, 우: 2-원인분해) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <FeatureBreakdown worst={worst} />
         <MetricTrendCard trends={metricTrends} horizons={horizons} />
+        <FeatureBreakdown worst={worst} horizons={horizons} />
       </div>
 
       {/* 3. 타임라인 — 시간대별 위험도 차트 */}
@@ -269,7 +275,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
         <span style={{ fontSize: 32 }}>{sev.emoji}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: sev.color }}>{headline}</div>
-          <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 4 }}>
             {evaluation.agent_id} | 기준 시점: {new Date(evaluation.timestamp).toLocaleString('ko-KR')}
             {' | '}데이터: {evaluation.data_source === 'influxdb' ? '최근 7일' : evaluation.data_source === 'buffer' ? '버퍼' : '대기중'}
           </div>
@@ -278,7 +284,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
           <div style={{ fontSize: 28, fontWeight: 700, color: sev.color }}>
             {(worst.final_score * 100).toFixed(0)}%
           </div>
-          <div style={{ fontSize: 11, color: '#64748b' }}>최대 위험도</div>
+          <div style={{ fontSize: 11, color: '#cbd5e1' }}>최대 위험도</div>
         </div>
       </div>
 
@@ -308,14 +314,18 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
 
 /* ────── 2a. Feature 기여도 분해 ────── */
 
-function FeatureBreakdown({ worst }: { worst: HorizonData }) {
-  const contribs = worst.feature_contributions || [];
+function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: HorizonData[] }) {
+  const [selectedIdx, setSelectedIdx] = useState(
+    horizons.findIndex(h => h.horizon_min === worst.horizon_min)
+  );
+  const selected = horizons[selectedIdx] || worst;
+  const contribs = selected.feature_contributions || [];
 
   if (contribs.length === 0) {
     return (
       <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
         <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>STEP 2. 왜 이상인가?</h4>
-        <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 20 }}>
+        <div style={{ color: '#cbd5e1', fontSize: 13, textAlign: 'center', padding: 20 }}>
           7일간 데이터를 학습 중입니다. 학습이 완료되면 원인 분석이 표시됩니다.
         </div>
       </div>
@@ -324,11 +334,22 @@ function FeatureBreakdown({ worst }: { worst: HorizonData }) {
 
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
-      <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
-        2 - 이상 원인 분해
-      </h4>
-      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.5 }}>
-        {horizonLabel(worst.horizon_min)} 예측값을 과거 7일과 비교해서, 평소와 가장 다른 지표 순으로 보여줍니다.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h4 style={{ margin: 0, fontSize: 14, color: '#e2e8f0' }}>2 - 이상 원인 분해</h4>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {horizons.map((h, i) => (
+            <button key={h.horizon_min} onClick={() => setSelectedIdx(i)} style={{
+              padding: '2px 8px', fontSize: 10, fontWeight: 500, cursor: 'pointer',
+              borderRadius: 4, border: `1px solid ${selectedIdx === i ? '#6366f1' : '#1f2937'}`,
+              backgroundColor: selectedIdx === i ? '#1e1b4b' : 'transparent',
+              color: selectedIdx === i ? '#a5b4fc' : '#cbd5e1',
+              transition: 'all 0.15s',
+            }}>{horizonLabel(h.horizon_min)}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
+        {horizonLabel(selected.horizon_min)} 예측값을 과거 7일과 비교하여, 평소와 가장 다른 지표 순으로 보여줍니다.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {contribs.map((fc, idx) => {
@@ -366,7 +387,7 @@ function FeatureBreakdown({ worst }: { worst: HorizonData }) {
                   <span style={{ fontSize: 16, fontWeight: 700, color: isTop ? '#c084fc' : '#a5b4fc' }}>
                     {fc.pct.toFixed(0)}%
                   </span>
-                  <div style={{ fontSize: 9, color: '#64748b' }}>기여도</div>
+                  <div style={{ fontSize: 11, color: '#cbd5e1' }}>기여도</div>
                 </div>
               </div>
 
@@ -389,7 +410,7 @@ function FeatureBreakdown({ worst }: { worst: HorizonData }) {
               {/* 하단: 예측값 + 임계값 */}
               <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                marginTop: 6, fontSize: 11, color: '#64748b',
+                marginTop: 6, fontSize: 11, color: '#cbd5e1',
               }}>
                 <span>
                   예측값 <strong style={{ color: '#e2e8f0' }}>{fc.predicted_value.toFixed(1)}{unit}</strong>
@@ -425,6 +446,8 @@ function analyzeMetricTrends(horizons: HorizonData[]): MetricTrend[] {
     { key: 'CPU', getter: (h: HorizonData) => h.pred_cpu },
     { key: 'Memory', getter: (h: HorizonData) => h.pred_memory },
     { key: 'DiskIO', getter: (h: HorizonData) => h.pred_disk_io },
+    { key: 'NetworkSent', getter: (h: HorizonData) => h.pred_network_sent ?? 0 },
+    { key: 'NetworkRecv', getter: (h: HorizonData) => h.pred_network_recv ?? 0 },
   ];
 
   return metrics.map(({ key, getter }) => {
@@ -458,7 +481,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
         <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
           1 - 미래 예측 수치
         </h4>
-        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           과거 패턴 기반 ARIMA 예측. 노란색=주의 구간, 빨간색=위험 구간.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -473,7 +496,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {threshold && (
-                      <span style={{ fontSize: 10, color: '#475569' }}>
+                      <span style={{ fontSize: 11, color: '#cbd5e1' }}>
                         주의 {threshold.warning}{unit} / 위험 {threshold.critical}{unit}
                       </span>
                     )}
@@ -512,11 +535,11 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                         </div>
                         <span style={{
                           fontSize: 10, fontWeight: 600,
-                          color: isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#94a3b8',
+                          color: isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#cbd5e1',
                         }}>
                           {val.toFixed(1)}{unit}
                         </span>
-                        <span style={{ fontSize: 8, color: '#475569' }}>{t.labels[i]}</span>
+                        <span style={{ fontSize: 9, color: '#cbd5e1' }}>{t.labels[i]}</span>
                       </div>
                     );
                   })}
@@ -532,14 +555,14 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
         <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
           3 - 최종 위험도 계산
         </h4>
-        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           이상 점수 x 신뢰도 = 위험도. 먼 미래일수록 신뢰도가 낮아져 위험도가 보정됩니다.
         </div>
 
         {/* 이상 점수 해설 */}
         <div style={{
           backgroundColor: '#0f172a', borderRadius: 8, padding: '10px 12px',
-          marginBottom: 8, fontSize: 11, lineHeight: 1.6, color: '#94a3b8',
+          marginBottom: 8, fontSize: 11, lineHeight: 1.6, color: '#cbd5e1',
         }}>
           <div style={{ fontWeight: 600, color: '#c084fc', marginBottom: 4 }}>
             이상 점수란?
@@ -569,7 +592,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
               }}>
                 {/* 시점 */}
                 <span style={{
-                  width: 56, fontSize: 11, fontWeight: 600, color: '#94a3b8', flexShrink: 0,
+                  width: 56, fontSize: 11, fontWeight: 600, color: '#cbd5e1', flexShrink: 0,
                 }}>
                   {horizonLabel(h.horizon_min)}
                 </span>
@@ -627,7 +650,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
         {/* 컬럼 라벨 */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, padding: '0 12px',
-          fontSize: 10, color: '#94a3b8',
+          fontSize: 10, color: '#cbd5e1',
         }}>
           <span style={{ width: 56 }}></span>
           <span style={{ flex: 1, textAlign: 'center', color: '#c084fc' }}>이상 점수</span>
@@ -647,67 +670,66 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
 function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
   const option = useMemo(() => {
     const labels = horizons.map(h => horizonLabel(h.horizon_min));
-    const cpuData = horizons.map(h => h.pred_cpu);
-    const memData = horizons.map(h => h.pred_memory);
     const riskData = horizons.map(h => h.final_score * 100);
+
+    const metricSeries = [
+      { name: 'CPU 사용률', data: horizons.map(h => h.pred_cpu), color: '#3b82f6' },
+      { name: '메모리 사용률', data: horizons.map(h => h.pred_memory), color: '#22c55e' },
+      { name: '디스크 사용률', data: horizons.map(h => h.pred_disk_io), color: '#f59e0b' },
+      { name: '네트워크 송신', data: horizons.map(h => h.pred_network_sent ?? 0), color: '#06b6d4' },
+      { name: '네트워크 수신', data: horizons.map(h => h.pred_network_recv ?? 0), color: '#14b8a6' },
+    ];
 
     return {
       backgroundColor: 'transparent',
-      title: {
-        text: '시간대별 예측값 및 위험도',
-        textStyle: { color: '#e2e8f0', fontSize: 14, fontWeight: 600 },
-        left: 0, top: 0,
-      },
       tooltip: {
         trigger: 'axis' as const,
-        backgroundColor: '#1e293b',
-        borderColor: '#334155',
-        textStyle: { color: '#e2e8f0', fontSize: 12 },
+        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+        borderColor: '#1f2937',
+        textStyle: { color: '#e2e8f0', fontSize: 11 },
       },
       legend: {
         bottom: 0,
-        textStyle: { color: '#94a3b8', fontSize: 11 },
-        data: ['CPU 예측', 'Memory 예측', '위험도'],
+        textStyle: { color: '#cbd5e1', fontSize: 11 },
+        itemWidth: 12, itemHeight: 8,
       },
-      grid: { top: 40, right: 60, bottom: 40, left: 50 },
+      grid: { top: 30, right: 60, bottom: 50, left: 50 },
       xAxis: {
         type: 'category' as const,
         data: labels,
-        axisLabel: { color: '#94a3b8', fontSize: 12 },
-        axisLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { color: '#cbd5e1', fontSize: 11, interval: 0 },
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: '#1f2937' } },
       },
       yAxis: [
         {
-          type: 'value' as const, name: '메트릭 (%)', min: 0, max: 100, position: 'left' as const,
-          axisLabel: { color: '#94a3b8', fontSize: 11 },
+          type: 'value' as const, name: '메트릭', position: 'left' as const,
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
           splitLine: { lineStyle: { color: '#1e293b' } },
         },
         {
-          type: 'value' as const, name: '위험도 (%)', min: 0, max: 100, position: 'right' as const,
-          axisLabel: { color: '#94a3b8', fontSize: 11 },
+          type: 'value' as const, name: '위험도 %', min: 0, max: 100, position: 'right' as const,
+          axisLabel: { color: '#64748b', fontSize: 10 },
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
           splitLine: { show: false },
         },
       ],
       series: [
+        ...metricSeries.map(s => ({
+          name: s.name, type: 'line' as const, data: s.data, smooth: true,
+          lineStyle: { color: s.color, width: 1.5 },
+          itemStyle: { color: s.color }, symbol: 'none' as const,
+        })),
         {
-          name: 'CPU 예측', type: 'line', data: cpuData, smooth: true,
-          lineStyle: { color: '#3b82f6', width: 2 },
-          itemStyle: { color: '#3b82f6' }, symbol: 'circle', symbolSize: 6,
-        },
-        {
-          name: 'Memory 예측', type: 'line', data: memData, smooth: true,
-          lineStyle: { color: '#22c55e', width: 2 },
-          itemStyle: { color: '#22c55e' }, symbol: 'circle', symbolSize: 6,
-        },
-        {
-          name: '위험도', type: 'bar', yAxisIndex: 1, data: riskData.map(v => ({
+          name: '위험도', type: 'bar' as const, yAxisIndex: 1, data: riskData.map(v => ({
             value: v,
             itemStyle: {
-              color: v >= 70 ? '#ef4444' : v >= 50 ? '#f59e0b' : 'rgba(59,130,246,0.3)',
-              borderRadius: [4, 4, 0, 0],
+              color: v >= 70 ? 'rgba(239,68,68,0.7)' : v >= 50 ? 'rgba(251,191,36,0.6)' : 'rgba(59,130,246,0.4)',
+              borderRadius: [3, 3, 0, 0],
             },
           })),
-          barWidth: '30%',
+          barWidth: '25%',
         },
       ],
     };
@@ -715,7 +737,8 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
 
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
-      <ReactECharts option={option} style={{ height: 280 }} />
+      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>3 - 시간대별 예측값 및 위험도</h4>
+      <ReactECharts option={option} style={{ height: 300 }} />
     </div>
   );
 }

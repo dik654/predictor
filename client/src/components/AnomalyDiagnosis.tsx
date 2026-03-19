@@ -70,7 +70,7 @@ export function AnomalyDiagnosis({ detections }: Props) {
     return (
       <div style={{
         backgroundColor: '#1e293b', borderRadius: 12, padding: 32,
-        textAlign: 'center', color: '#64748b',
+        textAlign: 'center', color: '#cbd5e1',
       }}>
         탐지 데이터 대기 중...
       </div>
@@ -98,12 +98,12 @@ export function AnomalyDiagnosis({ detections }: Props) {
               <div style={{ fontSize: 18, fontWeight: 700, color: sev.color }}>
                 {sev.label}
                 {diagnosis.topCause && diagnosis.overallSeverity !== 'normal' && (
-                  <span style={{ fontSize: 14, fontWeight: 400, color: '#94a3b8', marginLeft: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 400, color: '#cbd5e1', marginLeft: 8 }}>
                     — {diagnosis.topCause.metric}이(가) 주요 원인 ({diagnosis.topCause.pct.toFixed(0)}%)
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
                 {new Date(diagnosis.timestamp).toLocaleString('ko-KR')}
               </div>
             </div>
@@ -129,7 +129,7 @@ export function AnomalyDiagnosis({ detections }: Props) {
               <div key={c.metric}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
                   <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{c.metric}</span>
-                  <span style={{ color: c.severity === 'warning' ? '#f59e0b' : c.severity === 'critical' ? '#ef4444' : '#94a3b8' }}>
+                  <span style={{ color: c.severity === 'warning' ? '#f59e0b' : c.severity === 'critical' ? '#ef4444' : '#cbd5e1' }}>
                     {c.pct.toFixed(0)}% ({c.score.toFixed(3)})
                   </span>
                 </div>
@@ -157,7 +157,7 @@ export function AnomalyDiagnosis({ detections }: Props) {
             ARIMA 예측 잔차
           </h4>
           {diagnosis.arimaResults.length === 0 ? (
-            <div style={{ color: '#64748b', fontSize: 12, textAlign: 'center', padding: 20 }}>
+            <div style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', padding: 20 }}>
               ARIMA 데이터 수집 중...
             </div>
           ) : (
@@ -169,11 +169,11 @@ export function AnomalyDiagnosis({ detections }: Props) {
                   <div key={a.metric}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
                       <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{a.metric}</span>
-                      <span style={{ color: isOver ? '#ef4444' : '#94a3b8' }}>
+                      <span style={{ color: isOver ? '#ef4444' : '#cbd5e1' }}>
                         잔차 {a.arima_deviation?.toFixed(2)} / 임계 {a.threshold.toFixed(2)}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#64748b' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#cbd5e1' }}>
                       <span>예측 {a.arima_predicted?.toFixed(1)}</span>
                       {isOver && (
                         <span style={{

@@ -52,7 +52,7 @@ export function PredictionHeatmap({ cpuForecasts, memoryForecasts, currentCpu, c
           <div key={i} style={{ 
             textAlign: 'center', 
             fontSize: '11px', 
-            color: '#64748b',
+            color: '#94a3b8',
             fontWeight: i === 0 ? 'bold' : 'normal',
           }}>
             {label}
@@ -134,8 +134,8 @@ export function PredictionHeatmap({ cpuForecasts, memoryForecasts, currentCpu, c
         justifyContent: 'center', 
         gap: '16px', 
         marginTop: '12px',
-        fontSize: '10px',
-        color: '#64748b',
+        fontSize: '11px',
+        color: '#94a3b8',
       }}>
         <span>🟢 정상 (&lt;80%)</span>
         <span>🟡 주의 (80-90%)</span>

@@ -78,6 +78,8 @@ class HorizonEvaluation:
     pred_cpu: float
     pred_memory: float
     pred_disk_io: float
+    pred_network_sent: float = 0.0
+    pred_network_recv: float = 0.0
     ecod_score: float           # 0-1, from long-term ECOD
     rule_score: float           # 0-1, from binary feature rules
     combined_score: float       # weighted combination
@@ -375,10 +377,12 @@ class ForecastEvaluator:
                     pred_cpu=cpu,
                     pred_memory=mem,
                     pred_disk_io=disk,
+                    pred_network_sent=preds.get("network_sent", 0),
+                    pred_network_recv=preds.get("network_recv", 0),
                     ecod_score=score,
                     rule_score=self._compute_rule_score(agent_id),
                     combined_score=score,
-                    reliability=0.5,  # Low confidence in fallback mode
+                    reliability=0.5,
                     final_score=score * 0.5,
                     severity=severity,
                     is_outlier=severity != "normal",
@@ -477,6 +481,8 @@ class ForecastEvaluator:
                 pred_cpu=cpu,
                 pred_memory=mem,
                 pred_disk_io=disk,
+                pred_network_sent=net_sent,
+                pred_network_recv=net_recv,
                 ecod_score=ecod_score,
                 rule_score=rule_score,
                 combined_score=combined,
@@ -514,6 +520,8 @@ class ForecastEvaluator:
                     "pred_cpu": round(h.pred_cpu, 2),
                     "pred_memory": round(h.pred_memory, 2),
                     "pred_disk_io": round(h.pred_disk_io, 3),
+                    "pred_network_sent": round(h.pred_network_sent, 0),
+                    "pred_network_recv": round(h.pred_network_recv, 0),
                     "ecod_score": round(h.ecod_score, 3),
                     "rule_score": round(h.rule_score, 3),
                     "final_score": round(h.final_score, 3),

@@ -41,7 +41,7 @@ function Navigation() {
             key={item.path}
             to={item.path}
             style={{
-              color: isActive ? '#e2e8f0' : '#64748b',
+              color: isActive ? '#e2e8f0' : '#cbd5e1',
               textDecoration: 'none',
               padding: '12px 16px',
               fontSize: '12px',

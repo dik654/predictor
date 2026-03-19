@@ -104,7 +104,7 @@ export function ForecastComparison() {
 
   if (loading) {
     return (
-      <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', padding: '48px', textAlign: 'center', color: '#94a3b8', border: '1px solid #334155' }}>
+      <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', padding: '48px', textAlign: 'center', color: '#cbd5e1', border: '1px solid #334155' }}>
         <div style={{ fontSize: '14px' }}>Loading data...</div>
       </div>
     );
@@ -133,7 +133,7 @@ export function ForecastComparison() {
                 padding: '8px 14px', borderRadius: '6px',
                 border: selectedBucket === b.value ? '1.5px solid #22c55e' : '1px solid #334155',
                 backgroundColor: selectedBucket === b.value ? '#22c55e15' : 'transparent',
-                color: selectedBucket === b.value ? '#22c55e' : '#94a3b8',
+                color: selectedBucket === b.value ? '#22c55e' : '#cbd5e1',
                 cursor: 'pointer', fontSize: '12px', fontWeight: selectedBucket === b.value ? '600' : '400',
               }}
             >
@@ -154,7 +154,7 @@ export function ForecastComparison() {
               padding: '8px 14px', borderRadius: '6px',
               border: selectedMetric === key ? `1.5px solid ${color}` : '1px solid #334155',
               backgroundColor: selectedMetric === key ? `${color}15` : 'transparent',
-              color: selectedMetric === key ? color : '#94a3b8',
+              color: selectedMetric === key ? color : '#cbd5e1',
               cursor: 'pointer', fontSize: '13px', fontWeight: selectedMetric === key ? '600' : '400',
             }}
           >
@@ -169,11 +169,11 @@ export function ForecastComparison() {
         {/* Chart */}
         <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', padding: '24px', border: '1px solid #334155' }}>
           <div style={{ marginBottom: '20px', fontSize: '15px', fontWeight: '600', color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <TrendingUp size={17} style={{ color: '#94a3b8' }} />
+            <TrendingUp size={17} style={{ color: '#cbd5e1' }} />
             예측 vs 실제 ({selectedMetric.toUpperCase()}, {selectedHorizon}분 후)
           </div>
           {data && data.records.length === 0 ? (
-            <div style={{ height: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: '14px' }}>
+            <div style={{ height: '380px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#cbd5e1', fontSize: '14px' }}>
               No matched forecast/actual pairs yet
             </div>
           ) : (
@@ -185,40 +185,40 @@ export function ForecastComparison() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* Latest actual */}
           <div style={{ backgroundColor: '#0f172a', borderRadius: '8px', padding: '20px', border: '1px solid #10b98140', borderLeft: '3px solid #10b981' }}>
-            <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#cbd5e1', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               최근 실제값
             </div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#10b981', marginBottom: '4px' }}>
               {chartData.latestActual !== null ? chartData.latestActual.toFixed(2) : '—'}
             </div>
-            <div style={{ fontSize: '12px', color: '#64748b' }}>Latest actual value</div>
+            <div style={{ fontSize: '12px', color: '#cbd5e1' }}>Latest actual value</div>
           </div>
 
           {/* Latest forecast */}
           <div style={{ backgroundColor: '#0f172a', borderRadius: '8px', padding: '20px', border: '1px solid #3b82f640', borderLeft: '3px solid #3b82f6' }}>
-            <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#cbd5e1', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               해당 시점 예측값
             </div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#3b82f6', marginBottom: '4px' }}>
               {chartData.latestForecast !== null ? chartData.latestForecast.toFixed(2) : '—'}
             </div>
-            <div style={{ fontSize: '12px', color: '#64748b' }}>{selectedHorizon}분 전 예측</div>
+            <div style={{ fontSize: '12px', color: '#cbd5e1' }}>{selectedHorizon}분 전 예측</div>
           </div>
 
           {/* Mean accuracy */}
           <div style={{ backgroundColor: '#0f172a', borderRadius: '8px', padding: '20px', border: `1px solid ${accuracy.color}40`, borderLeft: `3px solid ${accuracy.color}` }}>
-            <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#cbd5e1', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               평균 오차율
             </div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: accuracy.color, marginBottom: '4px' }}>
               {accuracy.error !== null ? `${accuracy.error}%` : '—'}
             </div>
-            <div style={{ fontSize: '12px', color: '#64748b' }}>{accuracy.status} ({chartData.errorCount}건 중앙값)</div>
+            <div style={{ fontSize: '12px', color: '#cbd5e1' }}>{accuracy.status} ({chartData.errorCount}건 중앙값)</div>
           </div>
 
           {/* Horizon selector */}
           <div style={{ backgroundColor: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
-            <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', color: '#cbd5e1', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               예측 구간
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -236,7 +236,7 @@ export function ForecastComparison() {
                     padding: '9px 12px', borderRadius: '6px',
                     border: selectedHorizon === value ? '1px solid #3b82f6' : '1px solid #334155',
                     backgroundColor: selectedHorizon === value ? '#3b82f615' : 'transparent',
-                    color: selectedHorizon === value ? '#3b82f6' : '#94a3b8',
+                    color: selectedHorizon === value ? '#3b82f6' : '#cbd5e1',
                     cursor: 'pointer', fontSize: '13px', fontWeight: selectedHorizon === value ? '600' : '400',
                     textAlign: 'left', transition: 'all 0.2s',
                   }}

@@ -14,7 +14,7 @@ export function PredictionComparisonImproved() {
         padding: '14px 24px'
       }}>
         <h1 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 600 }}>예측 vs 실제 성능</h1>
-        <p style={{ margin: 0, fontSize: '11px', color: '#475569', fontWeight: '400' }}>장애 위험도 시계열 분석 - 예측과 실제 데이터 비교</p>
+        <p style={{ margin: 0, fontSize: '12px', color: '#cbd5e1', fontWeight: '400' }}>장애 위험도 시계열 분석 - 예측과 실제 데이터 비교</p>
       </header>
 
       {/* Main Content */}
@@ -28,7 +28,7 @@ export function PredictionComparisonImproved() {
           marginBottom: '24px'
         }}>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '13px', fontWeight: '600', color: '#e2e8f0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>성능 vs 예측</h3>
-          <p style={{ margin: '0 0 20px 0', fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>초록색(실제값) vs 파랑색(예측값) - 벌어지는 폭이 커질수록 성능 저하 신호</p>
+          <p style={{ margin: '0 0 20px 0', fontSize: '11px', color: '#cbd5e1', fontWeight: '400' }}>초록색(실제값) vs 파랑색(예측값) - 벌어지는 폭이 커질수록 성능 저하 신호</p>
           <ForecastComparison />
         </div>
 
@@ -133,10 +133,10 @@ function InterpretationCard({ title, metric, message, action, color }: { title: 
       <p style={{ margin: '4px 0 8px 0', fontSize: '11px', fontWeight: '500', color: '#e2e8f0' }}>
         {metric}
       </p>
-      <p style={{ margin: '0 0 10px 0', fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+      <p style={{ margin: '0 0 10px 0', fontSize: '11px', color: '#cbd5e1', fontWeight: '400' }}>
         {message}
       </p>
-      <p style={{ margin: 0, fontSize: '10px', color, fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+      <p style={{ margin: 0, fontSize: '11px', color, fontWeight: '600', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
         → {action}
       </p>
     </div>
@@ -152,16 +152,16 @@ function TimelineBox({ window, risk, color, probability, recommendation }: { win
       borderTop: `3px solid ${color}`,
       padding: '14px'
     }}>
-      <p style={{ margin: '0 0 8px 0', fontSize: '10px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+      <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
         {window}
       </p>
       <p style={{ margin: '8px 0 8px 0', fontSize: '28px', fontWeight: '700', color, letterSpacing: '-0.5px' }}>
         {probability}
       </p>
-      <p style={{ margin: '0 0 10px 0', fontSize: '10px', fontWeight: '600', color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+      <p style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '600', color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
         {risk} 위험도
       </p>
-      <p style={{ margin: 0, fontSize: '11px', color: '#94a3b8', lineHeight: '1.4', fontWeight: '400' }}>
+      <p style={{ margin: 0, fontSize: '11px', color: '#cbd5e1', lineHeight: '1.4', fontWeight: '400' }}>
         {recommendation}
       </p>
     </div>
@@ -182,10 +182,10 @@ function MetricExplanation({ label, example, meaning, context, color }: { label:
       <p style={{ margin: '0 0 6px 0', fontSize: '12px', color, fontFamily: 'monospace', fontWeight: '600' }}>
         {example}
       </p>
-      <p style={{ margin: '0 0 8px 0', fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+      <p style={{ margin: '0 0 8px 0', fontSize: '11px', color: '#cbd5e1', fontWeight: '400' }}>
         {meaning}
       </p>
-      <p style={{ margin: 0, fontSize: '10px', color: '#94a3b8', fontStyle: 'italic', fontWeight: '400' }}>
+      <p style={{ margin: 0, fontSize: '11px', color: '#cbd5e1', fontStyle: 'italic', fontWeight: '400' }}>
         💡 {context}
       </p>
     </div>

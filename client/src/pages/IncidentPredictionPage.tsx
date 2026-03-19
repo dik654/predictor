@@ -70,7 +70,7 @@ export function IncidentPredictionPage() {
           <ShieldAlert size={20} color="#ef4444" />
           <div>
             <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f1f5f9' }}>사고 예측 분석</h1>
-            <p style={{ margin: 0, fontSize: '11px', color: '#475569' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: '#cbd5e1' }}>
               ARIMA + ECOD 앙상블로 1시간~48시간 후 장애 가능성 평가
             </p>
           </div>
@@ -87,7 +87,7 @@ export function IncidentPredictionPage() {
                 padding: '6px 14px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
                 border: 'none', borderRadius: '6px', transition: 'all 0.2s',
                 backgroundColor: bucket === 'pos_metrics' ? '#1e293b' : 'transparent',
-                color: bucket === 'pos_metrics' ? '#e2e8f0' : '#64748b',
+                color: bucket === 'pos_metrics' ? '#e2e8f0' : '#cbd5e1',
               }}
             >
               Live
@@ -98,7 +98,7 @@ export function IncidentPredictionPage() {
                 padding: '6px 14px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
                 border: 'none', borderLeft: '1px solid #1f2937', borderRadius: '6px', transition: 'all 0.2s',
                 backgroundColor: bucket === 'sample_metrics' ? '#1e293b' : 'transparent',
-                color: bucket === 'sample_metrics' ? '#e2e8f0' : '#64748b',
+                color: bucket === 'sample_metrics' ? '#e2e8f0' : '#cbd5e1',
               }}
             >
               Sample
@@ -138,7 +138,7 @@ export function IncidentPredictionPage() {
           borderRadius: 10,
           padding: 32,
           textAlign: 'center',
-          color: '#94a3b8',
+          color: '#cbd5e1',
         }}>
           데이터를 불러오는 중...
         </div>
@@ -152,7 +152,7 @@ export function IncidentPredictionPage() {
           borderRadius: 10,
           padding: 32,
           textAlign: 'center',
-          color: '#94a3b8',
+          color: '#cbd5e1',
         }}>
           <div style={{ fontSize: 16, marginBottom: 8 }}>{error}</div>
           <div style={{ fontSize: 13 }}>30초마다 자동으로 재시도합니다.</div>

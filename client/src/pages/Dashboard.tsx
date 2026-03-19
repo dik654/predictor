@@ -279,7 +279,7 @@ export function Dashboard() {
           <Activity size={20} color="#3b82f6" />
           <div>
             <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 600, letterSpacing: '-0.01em', color: '#f1f5f9' }}>PulseAI</h1>
-            <p style={{ margin: 0, fontSize: '11px', color: '#475569', fontWeight: 400 }}>ECOD + AutoARIMA Anomaly Detection</p>
+            <p style={{ margin: 0, fontSize: '12px', color: '#cbd5e1', fontWeight: 400 }}>ECOD + AutoARIMA Anomaly Detection</p>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -289,13 +289,13 @@ export function Dashboard() {
                 padding: '5px 12px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
                 border: 'none', transition: 'all 0.15s',
                 backgroundColor: viewMode === mode ? '#1e293b' : 'transparent',
-                color: viewMode === mode ? '#e2e8f0' : '#475569',
+                color: viewMode === mode ? '#e2e8f0' : '#cbd5e1',
               }}>
                 {mode === 'realtime' ? '실시간' : 'DB'}
               </button>
             ))}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: isConnected ? '#4ade80' : '#64748b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: isConnected ? '#4ade80' : '#cbd5e1' }}>
             {isConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
             <span>{isConnected ? `${metricsCount}건` : 'No Data'}</span>
           </div>
@@ -316,10 +316,10 @@ export function Dashboard() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
             {([['system', '시스템'], ['peripheral', '주변장치']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setEcodGroup(key)} style={{
-                padding: '3px 10px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                padding: '3px 10px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
                 borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',
                 backgroundColor: ecodGroup === key ? '#1e293b' : 'transparent',
-                color: ecodGroup === key ? '#e2e8f0' : '#475569',
+                color: ecodGroup === key ? '#e2e8f0' : '#cbd5e1',
               }}>{label}</button>
             ))}
           </div>
@@ -336,10 +336,10 @@ export function Dashboard() {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
           {(arimaMetrics.length > 0 ? arimaMetrics : ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv']).map(m => (
             <button key={m} onClick={() => setArimaMetric(m)} style={{
-              padding: '3px 10px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+              padding: '3px 10px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
               borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',
               backgroundColor: arimaMetric === m ? '#1e293b' : 'transparent',
-              color: arimaMetric === m ? '#e2e8f0' : '#475569',
+              color: arimaMetric === m ? '#e2e8f0' : '#cbd5e1',
             }}>{m}</button>
           ))}
         </div>
@@ -352,7 +352,7 @@ export function Dashboard() {
           탐지 히스토리 ({viewMode === 'realtime' ? '실시간' : 'DB 전체'})
         </h3>
         {allDetections.length === 0 ? (
-          <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
+          <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '40px' }}>
             InfluxDB에서 데이터 조회 중... ({viewMode === 'realtime' ? '2초' : '5초'} 주기 폴링)
           </p>
         ) : (
@@ -360,13 +360,13 @@ export function Dashboard() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #334155' }}>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#94a3b8' }}>시간</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#94a3b8' }}>엔진</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#94a3b8' }}>메트릭</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#94a3b8' }}>Score</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#94a3b8' }}>신뢰도</th>
-                  <th style={{ padding: '10px', textAlign: 'center', color: '#94a3b8' }}>심각도</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#94a3b8' }}>상세</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
+                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
                 </tr>
               </thead>
               <tbody>
@@ -382,7 +382,7 @@ export function Dashboard() {
                       {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
-                    <td style={{ padding: '8px 10px', color: '#94a3b8', fontSize: '11px' }}>
+                    <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
                       {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
                     </td>
                   </tr>
@@ -399,7 +399,7 @@ export function Dashboard() {
 function StatCard({ title, value, color = '#3b82f6', icon }: { title: string; value: number; color?: string; icon?: ReactNode }) {
   return (
     <div style={{ backgroundColor: '#111827', borderRadius: '10px', padding: '14px 16px', border: '1px solid #1f2937', borderTop: `2px solid ${color}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#64748b', marginBottom: '6px', fontWeight: 500 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 500 }}>
         {icon && <span style={{ color, display: 'flex' }}>{icon}</span>}
         {title}
       </div>
@@ -417,7 +417,7 @@ function EngineTag({ engine }: { engine: string }) {
   };
   const c = colors[engine] || { bg: '#374151', text: '#9ca3af' };
   return (
-    <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: c.bg, color: c.text, fontSize: '10px', fontWeight: 'bold' }}>
+    <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: c.bg, color: c.text, fontSize: '11px', fontWeight: 'bold' }}>
       {engine.toUpperCase()}
     </span>
   );
@@ -431,7 +431,7 @@ function SeverityTag({ severity }: { severity: string }) {
   };
   const s = styles[severity] || styles.normal;
   return (
-    <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: s.bg, color: s.text, fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+    <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: s.bg, color: s.text, fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
       <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: s.dot }} />
       {severity}
     </span>

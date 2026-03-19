@@ -137,14 +137,14 @@ export function AccuracyDashboardImproved() {
         <Target size={20} color="#3b82f6" />
         <div>
           <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f1f5f9' }}>Accuracy Analytics</h1>
-          <p style={{ margin: 0, fontSize: '11px', color: '#475569' }}>예측 정확도 분석 — 예측을 얼마나 신뢰할 수 있는가?</p>
+          <p style={{ margin: 0, fontSize: '12px', color: '#cbd5e1' }}>예측 정확도 분석 — 예측을 얼마나 신뢰할 수 있는가?</p>
         </div>
       </header>
 
       <main style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
         {/* Loading/Error State */}
         {isLoading && (
-          <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '20px', marginBottom: '24px', textAlign: 'center', color: '#94a3b8' }}>
+          <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '20px', marginBottom: '24px', textAlign: 'center', color: '#cbd5e1' }}>
             Loading accuracy data...
           </div>
         )}
@@ -157,10 +157,10 @@ export function AccuracyDashboardImproved() {
         {/* Controls */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '24px' }}>
           <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '14px' }}>
-            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>지표</p>
+            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>지표</p>
             <div style={{ display: 'flex', gap: '6px' }}>
               {ALL_METRICS.map(m => (
-                <button key={m} onClick={() => setSelectedMetric(m)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedMetric === m ? '1px solid #3b82f6' : '1px solid #1f2937', backgroundColor: selectedMetric === m ? '#1e293b' : 'transparent', color: selectedMetric === m ? '#3b82f6' : '#94a3b8', cursor: 'pointer', fontSize: '11px', fontWeight: selectedMetric === m ? '600' : '400', transition: 'all 0.2s' }}>
+                <button key={m} onClick={() => setSelectedMetric(m)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedMetric === m ? '1px solid #3b82f6' : '1px solid #1f2937', backgroundColor: selectedMetric === m ? '#1e293b' : 'transparent', color: selectedMetric === m ? '#3b82f6' : '#cbd5e1', cursor: 'pointer', fontSize: '11px', fontWeight: selectedMetric === m ? '600' : '400', transition: 'all 0.2s' }}>
                   {m}
                 </button>
               ))}
@@ -168,13 +168,13 @@ export function AccuracyDashboardImproved() {
           </div>
 
           <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '14px' }}>
-            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>데이터 소스</p>
+            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>데이터 소스</p>
             <div style={{ display: 'flex', gap: '6px' }}>
               {[
                 { value: 'pos_metrics' as const, label: 'Live' },
                 { value: 'sample_metrics' as const, label: 'Sample' },
               ].map(b => (
-                <button key={b.value} onClick={() => setSelectedBucket(b.value)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedBucket === b.value ? '1px solid #10b981' : '1px solid #1f2937', backgroundColor: selectedBucket === b.value ? '#1e293b' : 'transparent', color: selectedBucket === b.value ? '#10b981' : '#94a3b8', cursor: 'pointer', fontSize: '11px', fontWeight: selectedBucket === b.value ? '600' : '400', transition: 'all 0.2s' }}>
+                <button key={b.value} onClick={() => setSelectedBucket(b.value)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedBucket === b.value ? '1px solid #10b981' : '1px solid #1f2937', backgroundColor: selectedBucket === b.value ? '#1e293b' : 'transparent', color: selectedBucket === b.value ? '#10b981' : '#cbd5e1', cursor: 'pointer', fontSize: '11px', fontWeight: selectedBucket === b.value ? '600' : '400', transition: 'all 0.2s' }}>
                   {b.label}
                 </button>
               ))}
@@ -182,7 +182,7 @@ export function AccuracyDashboardImproved() {
           </div>
 
           <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '14px' }}>
-            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>기간</p>
+            <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>기간</p>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {[
                 { value: 60, label: '1시간' },
@@ -191,7 +191,7 @@ export function AccuracyDashboardImproved() {
                 { value: 1440, label: '1일' },
                 { value: 2880, label: '2일' }
               ].map(h => (
-                <button key={h.value} onClick={() => setSelectedHorizon(h.value)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedHorizon === h.value ? '1px solid #3b82f6' : '1px solid #1f2937', backgroundColor: selectedHorizon === h.value ? '#1e293b' : 'transparent', color: selectedHorizon === h.value ? '#3b82f6' : '#94a3b8', cursor: 'pointer', fontSize: '11px', fontWeight: selectedHorizon === h.value ? '600' : '400', transition: 'all 0.2s' }}>
+                <button key={h.value} onClick={() => setSelectedHorizon(h.value)} style={{ padding: '6px 14px', borderRadius: '6px', border: selectedHorizon === h.value ? '1px solid #3b82f6' : '1px solid #1f2937', backgroundColor: selectedHorizon === h.value ? '#1e293b' : 'transparent', color: selectedHorizon === h.value ? '#3b82f6' : '#cbd5e1', cursor: 'pointer', fontSize: '11px', fontWeight: selectedHorizon === h.value ? '600' : '400', transition: 'all 0.2s' }}>
                   {h.label}
                 </button>
               ))}
@@ -209,7 +209,7 @@ export function AccuracyDashboardImproved() {
           marginBottom: '24px',
           textAlign: 'center'
         }}>
-          <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>신뢰도 점수</p>
+          <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>신뢰도 점수</p>
           <div style={{
             fontSize: '52px',
             fontWeight: '700',
@@ -222,7 +222,7 @@ export function AccuracyDashboardImproved() {
           <p style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#e2e8f0', fontWeight: '500' }}>
             {trustMessage}
           </p>
-          <p style={{ margin: 0, fontSize: '11px', color: '#94a3b8' }}>
+          <p style={{ margin: 0, fontSize: '11px', color: '#cbd5e1' }}>
             {stats.count}개 최근 예측 기반
           </p>
         </div>
@@ -255,15 +255,15 @@ export function AccuracyDashboardImproved() {
         <div style={{ backgroundColor: '#111827', borderRadius: '10px', border: '1px solid #1f2937', padding: '20px', overflow: 'auto' }}>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '13px', fontWeight: '600', color: '#e2e8f0' }}>최근 오차율</h3>
           {!currentData?.records?.length ? (
-            <p style={{ color: '#64748b', textAlign: 'center', padding: '32px', margin: 0 }}>데이터 없음</p>
+            <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '32px', margin: 0 }}>데이터 없음</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid #1f2937' }}>
-                    <th style={{ padding: '10px', textAlign: 'left', color: '#94a3b8', fontWeight: '600', fontSize: '12px' }}>시간</th>
-                    <th style={{ padding: '10px', textAlign: 'right', color: '#94a3b8', fontWeight: '600', fontSize: '12px' }}>오차%</th>
-                    <th style={{ padding: '10px', textAlign: 'center', color: '#94a3b8', fontWeight: '600', fontSize: '12px' }}>신뢰도</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1', fontWeight: '600', fontSize: '12px' }}>시간</th>
+                    <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1', fontWeight: '600', fontSize: '12px' }}>오차%</th>
+                    <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1', fontWeight: '600', fontSize: '12px' }}>신뢰도</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -272,7 +272,7 @@ export function AccuracyDashboardImproved() {
                     const color = error < 5 ? '#10b981' : error < 10 ? '#3b82f6' : error < 20 ? '#f59e0b' : '#ef4444';
                     return (
                       <tr key={i} style={{ borderBottom: '1px solid #1e293b' }}>
-                        <td style={{ padding: '8px 10px', color: '#94a3b8' }}>{new Date(r.timestamp).toLocaleTimeString()}</td>
+                        <td style={{ padding: '8px 10px', color: '#cbd5e1' }}>{new Date(r.timestamp).toLocaleTimeString()}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'right', color, fontWeight: '600', fontFamily: 'monospace' }}>{error}%</td>
                         <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                           <span style={{ padding: '2px 6px', borderRadius: '3px', backgroundColor: `${color}20`, color, fontSize: '9px', fontWeight: '600', textTransform: 'uppercase' }}>
@@ -301,7 +301,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       padding: '14px',
       textAlign: 'center'
     }}>
-      <p style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</p>
+      <p style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</p>
       <p style={{ margin: 0, fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>{value}</p>
     </div>
   );
@@ -317,8 +317,8 @@ function DecisionBox({ title, threshold, color, examples }: { title: string; thr
       padding: '16px'
     }}>
       <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: '700', color }}>{title}</h4>
-      <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#94a3b8', fontWeight: '500' }}>신뢰도: {threshold}</p>
-      <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '13px', color: '#94a3b8' }}>
+      <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#cbd5e1', fontWeight: '500' }}>신뢰도: {threshold}</p>
+      <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '13px', color: '#cbd5e1' }}>
         {examples.map((ex, i) => (
           <li key={i} style={{ margin: '2px 0' }}>{ex}</li>
         ))}

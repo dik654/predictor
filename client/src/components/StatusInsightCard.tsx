@@ -137,7 +137,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
         alignItems: 'center', 
         justifyContent: 'space-between',
       }}>
-        <h3 style={{ margin: 0, fontSize: '14px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <h3 style={{ margin: 0, fontSize: '14px', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Crosshair size={14} /> 시스템 상태 분석
         </h3>
       </div>
@@ -206,12 +206,12 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
                         transition: 'width 0.3s ease',
                       }} />
                     </div>
-                    <span style={{ color: labelColor, minWidth: '52px', textAlign: 'right', flexShrink: 0, fontSize: '10px', fontWeight: 600 }}>
+                    <span style={{ color: labelColor, minWidth: '52px', textAlign: 'right', flexShrink: 0, fontSize: '11px', fontWeight: 600 }}>
                       {labelText}
                     </span>
                   </div>
                   {d.description && (
-                    <div style={{ fontSize: '9px', color: '#64748b', paddingLeft: '88px', marginTop: '1px' }}>
+                    <div style={{ fontSize: '11px', color: '#cbd5e1', paddingLeft: '88px', marginTop: '1px' }}>
                       {d.description}
                     </div>
                   )}
@@ -230,8 +230,8 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
           gap: '8px',
           marginBottom: '8px',
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', color: '#94a3b8' }}><Eye size={14} /></span>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>예측 경보</span>
+          <span style={{ display: 'flex', alignItems: 'center', color: '#cbd5e1' }}><Eye size={14} /></span>
+          <span style={{ fontSize: '12px', color: '#cbd5e1' }}>예측 경보</span>
         </div>
         
         {arimaForecasts.length === 0 ? (
@@ -242,10 +242,10 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
             textAlign: 'center',
           }}>
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#22c55e' }}><CheckCircle size={20} /></span>
-            <p style={{ 
-              margin: '8px 0 0', 
-              fontSize: '11px', 
-              color: '#64748b',
+            <p style={{
+              margin: '8px 0 0',
+              fontSize: '12px',
+              color: '#cbd5e1',
             }}>
               향후 2시간 내 예상되는 문제 없음
             </p>
@@ -277,9 +277,9 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
                     }}>
                       {formatMinutes(alert.minutes)} 후 {alert.metric} {alert.severity === 'critical' ? '위험' : '주의'}
                     </div>
-                    <div style={{ 
-                      fontSize: '10px', 
-                      color: '#94a3b8',
+                    <div style={{
+                      fontSize: '11px',
+                      color: '#cbd5e1',
                       marginTop: '2px',
                     }}>
                       예측값: {alert.value.toFixed(1)}%
