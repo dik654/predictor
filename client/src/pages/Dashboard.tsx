@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { PeripheralCards } from '../components/PeripheralCards';
 import { StatusInsightCard } from '../components/StatusInsightCard';
@@ -158,10 +158,27 @@ export function Dashboard() {
   const metricsMap = new Map(dbMetrics.map(m => [m.timestamp, m]));
   const metricKeyMap: Record<string, keyof InfluxMetric> = { CPU: 'cpu', Memory: 'memory', DiskIO: 'disk_io' };
   const metricKey = metricKeyMap[arimaMetric] || 'cpu';
+  // 타임스탬프를 밀리초로 변환한 정렬 배열 (가까운 매칭용)
+  const metricsTimes = useMemo(() =>
+    dbMetrics.map(m => ({ t: new Date(m.timestamp).getTime(), m })).sort((a, b) => a.t - b.t),
+    [dbMetrics]
+  );
   const arimaActual = selectedArimaData.map(d => {
-    const m = metricsMap.get(d.timestamp);
-    if (m) return m[metricKey] as number;
-    return d.arima_predicted != null && d.arima_deviation != null ? d.arima_predicted - d.arima_deviation : null;
+    // 1. 정확한 매칭 시도
+    const exact = metricsMap.get(d.timestamp);
+    if (exact) return exact[metricKey] as number;
+    // 2. 가장 가까운 타임스탬프 매칭 (30초 이내)
+    const dt = new Date(d.timestamp).getTime();
+    let best: typeof metricsTimes[0] | null = null;
+    let bestDiff = Infinity;
+    for (const mt of metricsTimes) {
+      const diff = Math.abs(mt.t - dt);
+      if (diff < bestDiff) { bestDiff = diff; best = mt; }
+      if (mt.t > dt + 30000) break;
+    }
+    if (best && bestDiff < 30000) return best.m[metricKey] as number;
+    // 3. fallback: 예측값 사용 (차트 끊김 방지)
+    return d.arima_predicted ?? 0;
   });
 
   // 잔차 영역: 두 라인 사이 band = lower(투명) + bandWidth(색상)
