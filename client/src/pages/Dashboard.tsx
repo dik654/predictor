@@ -307,8 +307,8 @@ export function Dashboard() {
       </div>
 
       {/* Charts Row 1 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
-        <div style={{ ...card, padding: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px', alignItems: 'stretch' }}>
+        <div style={{ ...card, padding: '16px', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
             {([['all', '전체'], ['system', '시스템'], ['peripheral', '주변장치'], ['status', '상태']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setEcodGroup(key)} style={{
@@ -319,7 +319,7 @@ export function Dashboard() {
               }}>{label}</button>
             ))}
           </div>
-          <ReactECharts option={ecodChartOption} style={{ height: '400px' }} />
+          <ReactECharts option={ecodChartOption} style={{ flex: 1, minHeight: '300px' }} />
         </div>
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
       </div>
