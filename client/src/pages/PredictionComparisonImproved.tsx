@@ -3,24 +3,27 @@ import { ForecastComparison } from '../components/ForecastComparison';
 
 export function PredictionComparisonImproved() {
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#e2e8f0', display: 'flex', flexDirection: 'column', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#0a0e1a', color: '#e2e8f0', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', -apple-system, sans-serif" }}>
       {/* Header */}
       <header style={{
-        backgroundColor: '#1e293b',
-        borderBottom: '1px solid #334155',
-        padding: '24px 32px'
+        backgroundColor: '#111827',
+        border: '1px solid #1f2937',
+        borderRadius: '10px',
+        margin: '24px',
+        marginBottom: '0',
+        padding: '14px 24px'
       }}>
-        <h1 style={{ margin: '0 0 6px 0', fontSize: '28px', fontWeight: '700', letterSpacing: '-0.5px' }}>예측 vs 실제 성능</h1>
-        <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8', fontWeight: '400' }}>장애 위험도 시계열 분석 - 예측과 실제 데이터 비교</p>
+        <h1 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 600 }}>예측 vs 실제 성능</h1>
+        <p style={{ margin: 0, fontSize: '11px', color: '#475569', fontWeight: '400' }}>장애 위험도 시계열 분석 - 예측과 실제 데이터 비교</p>
       </header>
 
       {/* Main Content */}
-      <main style={{ flex: 1, padding: '28px 32px', overflow: 'auto' }}>
+      <main style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
         {/* Forecast Chart */}
         <div style={{
-          backgroundColor: '#1e293b',
-          borderRadius: '8px',
-          border: '1px solid #334155',
+          backgroundColor: '#111827',
+          borderRadius: '10px',
+          border: '1px solid #1f2937',
           padding: '20px',
           marginBottom: '24px'
         }}>
@@ -118,7 +121,7 @@ export function PredictionComparisonImproved() {
 function InterpretationCard({ title, metric, message, action, color }: { title: string; metric: string; message: string; action: string; color: string }) {
   return (
     <div style={{
-      backgroundColor: '#1e293b',
+      backgroundColor: '#111827',
       borderRadius: '8px',
       border: `1px solid ${color}40`,
       borderLeft: `3px solid ${color}`,
@@ -143,7 +146,7 @@ function InterpretationCard({ title, metric, message, action, color }: { title: 
 function TimelineBox({ window, risk, color, probability, recommendation }: { window: string; risk: string; color: string; probability: string; recommendation: string }) {
   return (
     <div style={{
-      backgroundColor: '#1e293b',
+      backgroundColor: '#111827',
       borderRadius: '8px',
       border: `1px solid ${color}40`,
       borderTop: `3px solid ${color}`,
@@ -168,7 +171,7 @@ function TimelineBox({ window, risk, color, probability, recommendation }: { win
 function MetricExplanation({ label, example, meaning, context, color }: { label: string; example: string; meaning: string; context: string; color: string }) {
   return (
     <div style={{
-      backgroundColor: '#1e293b',
+      backgroundColor: '#111827',
       borderRadius: '8px',
       border: `1px solid ${color}40`,
       padding: '14px'

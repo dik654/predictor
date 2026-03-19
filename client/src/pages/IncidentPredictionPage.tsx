@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { IncidentPrediction } from '../components/IncidentPrediction';
+import { ShieldAlert } from 'lucide-react';
 
 const DEFAULT_AGENT_ID = 'V135-POS-03';
 const POLL_INTERVAL = 30_000;
@@ -53,36 +54,40 @@ export function IncidentPredictionPage() {
   const dataAge = evaluation?.timestamp ? getDataAge(evaluation.timestamp) : null;
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#e2e8f0', padding: '20px' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#0a0e1a', color: '#e2e8f0', padding: '20px', fontFamily: "'Inter', -apple-system, sans-serif" }}>
       {/* Header */}
       <header style={{
-        backgroundColor: '#1e293b',
-        borderRadius: '12px',
-        padding: '16px 24px',
-        marginBottom: '20px',
+        backgroundColor: '#111827',
+        border: '1px solid #1f2937',
+        borderRadius: '10px',
+        padding: '14px 24px',
+        marginBottom: '16px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '24px' }}>사고 예측 분석</h1>
-          <p style={{ margin: '4px 0 0', fontSize: '14px', color: '#94a3b8' }}>
-            ARIMA 예측값을 장기 ECOD 모델로 평가하여 1시간~2일 후 사고 가능성을 판단합니다
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ShieldAlert size={20} color="#ef4444" />
+          <div>
+            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f1f5f9' }}>사고 예측 분석</h1>
+            <p style={{ margin: 0, fontSize: '11px', color: '#475569' }}>
+              ARIMA + ECOD 앙상블로 1시간~48시간 후 장애 가능성 평가
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {/* Bucket Toggle */}
           <div style={{
-            display: 'flex', borderRadius: '8px', overflow: 'hidden',
-            border: '1px solid #334155',
+            display: 'flex', borderRadius: '6px', overflow: 'hidden',
+            border: '1px solid #1f2937',
           }}>
             <button
               onClick={() => setBucket('pos_metrics')}
               style={{
-                padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                border: 'none', transition: 'all 0.2s',
-                backgroundColor: bucket === 'pos_metrics' ? '#14532d' : '#1e293b',
-                color: bucket === 'pos_metrics' ? '#4ade80' : '#64748b',
+                padding: '6px 14px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                border: 'none', borderRadius: '6px', transition: 'all 0.2s',
+                backgroundColor: bucket === 'pos_metrics' ? '#1e293b' : 'transparent',
+                color: bucket === 'pos_metrics' ? '#e2e8f0' : '#64748b',
               }}
             >
               Live
@@ -90,10 +95,10 @@ export function IncidentPredictionPage() {
             <button
               onClick={() => setBucket('sample_metrics')}
               style={{
-                padding: '6px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                border: 'none', borderLeft: '1px solid #334155', transition: 'all 0.2s',
-                backgroundColor: bucket === 'sample_metrics' ? '#0c4a6e' : '#1e293b',
-                color: bucket === 'sample_metrics' ? '#38bdf8' : '#64748b',
+                padding: '6px 14px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                border: 'none', borderLeft: '1px solid #1f2937', borderRadius: '6px', transition: 'all 0.2s',
+                backgroundColor: bucket === 'sample_metrics' ? '#1e293b' : 'transparent',
+                color: bucket === 'sample_metrics' ? '#e2e8f0' : '#64748b',
               }}
             >
               Sample
@@ -102,10 +107,10 @@ export function IncidentPredictionPage() {
 
           {dataAge && (
             <span style={{
-              padding: '4px 10px',
-              borderRadius: '12px',
+              padding: '3px 8px',
+              borderRadius: '6px',
               fontSize: '11px',
-              backgroundColor: '#1e3a5f',
+              backgroundColor: '#1e293b',
               color: '#60a5fa',
             }}>
               {dataAge} 갱신
@@ -113,10 +118,10 @@ export function IncidentPredictionPage() {
           )}
           {evaluation?.agent_id && (
             <span style={{
-              padding: '6px 12px',
-              borderRadius: '16px',
-              fontSize: '12px',
-              backgroundColor: '#1e3a5f',
+              padding: '3px 8px',
+              borderRadius: '6px',
+              fontSize: '11px',
+              backgroundColor: '#1e293b',
               color: '#60a5fa',
             }}>
               {evaluation.agent_id}
@@ -128,8 +133,9 @@ export function IncidentPredictionPage() {
       {/* Loading */}
       {loading && (
         <div style={{
-          backgroundColor: '#1e293b',
-          borderRadius: 12,
+          backgroundColor: '#111827',
+          border: '1px solid #1f2937',
+          borderRadius: 10,
           padding: 32,
           textAlign: 'center',
           color: '#94a3b8',
@@ -141,8 +147,9 @@ export function IncidentPredictionPage() {
       {/* Error */}
       {!loading && error && !evaluation && (
         <div style={{
-          backgroundColor: '#1e293b',
-          borderRadius: 12,
+          backgroundColor: '#111827',
+          border: '1px solid #1f2937',
+          borderRadius: 10,
           padding: 32,
           textAlign: 'center',
           color: '#94a3b8',

@@ -1,8 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
-import { AccuracyDashboard } from './pages/AccuracyDashboard';
 import { AccuracyDashboardImproved } from './pages/AccuracyDashboardImproved';
-import { PredictionComparisonImproved } from './pages/PredictionComparisonImproved';
 import { IncidentPredictionPage } from './pages/IncidentPredictionPage';
 
 function App() {
@@ -11,94 +9,51 @@ function App() {
       <Navigation />
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/accuracy" element={<AccuracyDashboard />} />
-        <Route path="/accuracy-improved" element={<AccuracyDashboardImproved />} />
-        <Route path="/prediction-improved" element={<PredictionComparisonImproved />} />
+        <Route path="/accuracy" element={<AccuracyDashboardImproved />} />
         <Route path="/incident-prediction" element={<IncidentPredictionPage />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
+const NAV_ITEMS = [
+  { path: '/', label: 'Dashboard' },
+  { path: '/accuracy', label: 'Accuracy Analytics' },
+  { path: '/incident-prediction', label: '사고 예측 분석' },
+];
+
 function Navigation() {
   const location = useLocation();
 
   return (
     <nav style={{
-      backgroundColor: '#2c3e50',
-      padding: '0 20px',
+      backgroundColor: '#0a0e1a',
+      padding: '0 24px',
       display: 'flex',
-      gap: '20px',
-      borderBottom: '1px solid #34495e',
+      gap: '4px',
+      borderBottom: '1px solid #1f2937',
+      fontFamily: "'Inter', -apple-system, sans-serif",
     }}>
-      <Link
-        to="/"
-        style={{
-          color: location.pathname === '/' ? '#3498db' : '#ecf0f1',
-          textDecoration: 'none',
-          padding: '15px 0',
-          fontWeight: location.pathname === '/' ? 'bold' : 'normal',
-          borderBottom: location.pathname === '/' ? '3px solid #3498db' : 'none',
-        }}
-      >
-        PulseAI Dashboard
-      </Link>
-      <Link
-        to="/accuracy"
-        style={{
-          color: location.pathname === '/accuracy' ? '#3498db' : '#ecf0f1',
-          textDecoration: 'none',
-          padding: '15px 0',
-          fontWeight: location.pathname === '/accuracy' ? 'bold' : 'normal',
-          borderBottom: location.pathname === '/accuracy' ? '3px solid #3498db' : 'none',
-        }}
-      >
-        Accuracy Analytics
-      </Link>
-
-      {/* Improved versions - separator */}
-      <div style={{ width: '1px', backgroundColor: '#34495e', margin: '10px 0' }} />
-
-      <Link
-        to="/accuracy-improved"
-        style={{
-          color: location.pathname === '/accuracy-improved' ? '#2ecc71' : '#ecf0f1',
-          textDecoration: 'none',
-          padding: '15px 0',
-          fontWeight: location.pathname === '/accuracy-improved' ? 'bold' : 'normal',
-          borderBottom: location.pathname === '/accuracy-improved' ? '3px solid #2ecc71' : 'none',
-        }}
-      >
-        Accuracy Analytics (개선)
-      </Link>
-      <Link
-        to="/prediction-improved"
-        style={{
-          color: location.pathname === '/prediction-improved' ? '#2ecc71' : '#ecf0f1',
-          textDecoration: 'none',
-          padding: '15px 0',
-          fontWeight: location.pathname === '/prediction-improved' ? 'bold' : 'normal',
-          borderBottom: location.pathname === '/prediction-improved' ? '3px solid #2ecc71' : 'none',
-        }}
-      >
-        예측 vs 실제
-      </Link>
-
-      {/* Executive section - separator */}
-      <div style={{ width: '1px', backgroundColor: '#34495e', margin: '10px 0' }} />
-
-      <Link
-        to="/incident-prediction"
-        style={{
-          color: location.pathname === '/incident-prediction' ? '#e74c3c' : '#ecf0f1',
-          textDecoration: 'none',
-          padding: '15px 0',
-          fontWeight: location.pathname === '/incident-prediction' ? 'bold' : 'normal',
-          borderBottom: location.pathname === '/incident-prediction' ? '3px solid #e74c3c' : 'none',
-        }}
-      >
-        사고 예측 분석
-      </Link>
+      {NAV_ITEMS.map(item => {
+        const isActive = location.pathname === item.path;
+        return (
+          <Link
+            key={item.path}
+            to={item.path}
+            style={{
+              color: isActive ? '#e2e8f0' : '#64748b',
+              textDecoration: 'none',
+              padding: '12px 16px',
+              fontSize: '12px',
+              fontWeight: isActive ? 600 : 400,
+              borderBottom: isActive ? '2px solid #3b82f6' : '2px solid transparent',
+              transition: 'all 0.15s',
+            }}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
