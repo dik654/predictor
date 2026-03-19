@@ -252,9 +252,9 @@ export function Dashboard() {
         name: '잔차', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: bandWidth, barWidth: '50%',
         itemStyle: { color: (params: any) => {
           const v = params.value || 0;
-          if (v > 20) return 'rgba(239, 68, 68, 0.7)';
-          if (v > 10) return 'rgba(251, 191, 36, 0.6)';
-          return 'rgba(100, 116, 139, 0.35)';
+          if (v > 20) return 'rgba(239, 68, 68, 0.8)';
+          if (v > 10) return 'rgba(251, 191, 36, 0.7)';
+          return 'rgba(59, 130, 246, 0.5)';
         }, borderRadius: [2, 2, 0, 0] },
       },
     ],
@@ -323,7 +323,7 @@ export function Dashboard() {
               }}>{label}</button>
             ))}
           </div>
-          <ReactECharts option={ecodChartOption} style={{ height: '300px' }} />
+          <ReactECharts option={ecodChartOption} style={{ height: '400px' }} />
         </div>
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
       </div>

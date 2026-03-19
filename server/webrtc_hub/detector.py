@@ -267,9 +267,13 @@ class EnhancedAnomalyDetector:
                 details=multi_details,
             ))
             
-            # Per-metric breakdown: 연속값만 (이산값은 개별 점수가 무의미 — 다변량 종합에만 사용)
-            metric_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv"]
-            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1], net_sent_arr[-1], net_recv_arr[-1]]
+            # Per-metric breakdown: 전체 14차원 (차트용)
+            # 이산값의 개별 점수는 StatusInsightCard에서 필터링
+            metric_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
+                            "Dongle", "HandScanner", "PassportReader", "2DScanner", "PhoneCharger", "Keyboard", "MSR", "POS_Idle"]
+            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1], net_sent_arr[-1], net_recv_arr[-1], proc_arr[-1],
+                             p_dongle[-1], p_hand_scanner[-1], p_passport[-1], p_2d_scanner[-1], p_phone_charger[-1], p_keyboard[-1], p_msr[-1],
+                             idle_arr[-1]]
             
             for i, (name, value) in enumerate(zip(metric_names, metric_values)):
                 # Simple univariate score approximation

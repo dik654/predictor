@@ -58,12 +58,14 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
       status,
       message,
       score: multivariate.score,
-      details: metrics.map(m => ({
-        metric: m.metric,
-        score: m.score,
-        severity: m.severity,
-        description: m.details || '',
-      })),
+      details: metrics
+        .filter(m => ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv'].includes(m.metric))
+        .map(m => ({
+          metric: m.metric,
+          score: m.score,
+          severity: m.severity,
+          description: m.details || '',
+        })),
     };
   }, [detections]);
 
