@@ -163,7 +163,7 @@ function metricKo(metric: string): string {
   return METRIC_KO[metric] || Object.entries(METRIC_KO).find(([k]) => k.toLowerCase() === metric.toLowerCase())?.[1] || metric;
 }
 function metricThreshold(metric: string) {
-  return metricThreshold(metric) || Object.entries(METRIC_THRESHOLDS).find(([k]) => k.toLowerCase() === metric.toLowerCase())?.[1];
+  return METRIC_THRESHOLDS[metric] || Object.entries(METRIC_THRESHOLDS).find(([k]) => k.toLowerCase() === metric.toLowerCase())?.[1];
 }
 
 function horizonLabel(min: number): string {

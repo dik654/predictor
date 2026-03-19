@@ -55,10 +55,7 @@ export function Dashboard() {
         const data = await resp.json();
         const metrics: InfluxMetric[] = data.metrics || [];
         setDbConnected(metrics.length > 0);
-        if (metrics.length !== prevMetricsLen.current) {
-          prevMetricsLen.current = metrics.length;
-          setDbMetrics(metrics);
-        }
+        setDbMetrics(metrics);
       } else {
         setDbConnected(false);
       }
@@ -73,9 +70,8 @@ export function Dashboard() {
       if (resp.ok) {
         const data = await resp.json();
         const detections: InfluxDetection[] = data.detections || [];
-        if (detections.length !== prevDetectionsLen.current) {
-          prevDetectionsLen.current = detections.length;
-          setDbDetections(detections);
+        setDbDetections(detections);
+        {
           let score = 100;
           for (const d of detections.slice(-20)) {
             if (d.severity === 'critical') score -= Math.round(20 * d.confidence);
@@ -125,7 +121,7 @@ export function Dashboard() {
   const peripheralAlerts = dbDetections.filter(d => d.engine === 'peripheral').slice(-20);
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
-  const latestDetections = dbDetections.slice(-10);
+  const latestDetections = dbDetections.slice(-30);
   const allDetections = dbDetections.slice(-30).reverse();
   const metricsCount = dbMetrics.length;
   const healthScore = dbHealthScore;
