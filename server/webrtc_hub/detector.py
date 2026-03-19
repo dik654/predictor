@@ -226,6 +226,7 @@ class EnhancedAnomalyDetector:
             # Normalize score to 0-1 range
             all_scores = model.decision_function(X)
             score_normalized = (score - all_scores.min()) / (all_scores.max() - all_scores.min() + 1e-10)
+            score_normalized = max(0.0, min(1.0, score_normalized))  # 0~1 클램핑
             
             # Track score history
             self.score_history[agent_id].append(score_normalized)
