@@ -158,6 +158,14 @@ const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; uni
   POS_Idle: { warning: 0.5, critical: 0, unit: '' },
 };
 
+// 대소문자 무시 매핑 헬퍼
+function metricKo(metric: string): string {
+  return METRIC_KO[metric] || Object.entries(METRIC_KO).find(([k]) => k.toLowerCase() === metric.toLowerCase())?.[1] || metric;
+}
+function metricThreshold(metric: string) {
+  return metricThreshold(metric) || Object.entries(METRIC_THRESHOLDS).find(([k]) => k.toLowerCase() === metric.toLowerCase())?.[1];
+}
+
 function horizonLabel(min: number): string {
   if (min < 60) return `${min}분 후`;
   if (min < 1440) return `${min / 60}시간 후`;
@@ -288,7 +296,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
   if (evaluation.overall_severity === 'normal') {
     headline = '현재 예측 범위 내 이상 징후 없음';
   } else if (earliestRisk && topFeature) {
-    const metricName = METRIC_KO[topFeature.metric] || topFeature.metric;
+    const metricName = metricKo(topFeature.metric);
     headline = `${horizonLabel(earliestRisk.horizon_min)} ${metricName} 이상 예상`;
   } else if (earliestRisk) {
     headline = `${horizonLabel(earliestRisk.horizon_min)} 이상 발생 가능성`;
@@ -326,7 +334,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
           {topFeature && (
             <div style={{ marginBottom: 8 }}>
               <strong style={{ color: sev.color }}>원인:</strong>{' '}
-              {METRIC_KO[topFeature.metric] || topFeature.metric}이(가)
+              {metricKo(topFeature.metric)}이(가)
               예측값 <strong>{topFeature.predicted_value.toFixed(1)}</strong>로
               정상 범위를 벗어날 가능성 (기여도 {topFeature.pct.toFixed(0)}%)
             </div>
@@ -349,10 +357,11 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
   );
   const selected = horizons[selectedIdx] || worst;
   const rawContribs = selected.feature_contributions || [];
-  // METRIC_ORDER 순서로 정렬, 없는 것은 뒤로
+  // METRIC_ORDER 순서로 정렬 (대소문자 무시 매칭)
   const contribs = [...rawContribs].sort((a, b) => {
-    const ai = METRIC_ORDER.indexOf(a.metric);
-    const bi = METRIC_ORDER.indexOf(b.metric);
+    const findIdx = (m: string) => METRIC_ORDER.findIndex(o => o.toLowerCase() === m.toLowerCase());
+    const ai = findIdx(a.metric);
+    const bi = findIdx(b.metric);
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   });
 
@@ -388,7 +397,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {contribs.map((fc, idx) => {
-          const threshold = METRIC_THRESHOLDS[fc.metric];
+          const threshold = metricThreshold(fc.metric);
           const unit = threshold?.unit || '';
           const isTop = idx === 0;
           const barColor = isTop ? '#8b5cf6' : '#6366f1';
@@ -407,7 +416,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>
-                    {METRIC_KO[fc.metric] || fc.metric}
+                    {metricKo(fc.metric)}
                   </span>
                   {isTop && (
                     <span style={{
@@ -522,19 +531,19 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {trends.map(t => {
-            const threshold = METRIC_THRESHOLDS[t.metric];
+            const threshold = metricThreshold(t.metric);
             const unit = threshold?.unit || '';
             return (
               <div key={t.metric} style={{ backgroundColor: '#0f172a', borderRadius: 8, padding: '10px 12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>
-                    {METRIC_KO[t.metric] || t.metric}
+                    {metricKo(t.metric)}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {threshold && (
                       <span style={{ fontSize: 11, color: '#cbd5e1' }}>
                         {threshold.critical === 0
-                          ? '1=정상 / 0=실패'
+                          ? '연결 성공=1 / 연결 실패=0'
                           : `주의 ${threshold.warning}${unit} / 위험 ${threshold.critical}${unit}`}
                       </span>
                     )}
@@ -795,7 +804,7 @@ function getRecommendation(worst: HorizonData, trends: MetricTrend[]): string {
 
   const metric = topFeature.metric;
   const value = topFeature.predicted_value;
-  const threshold = METRIC_THRESHOLDS[metric];
+  const threshold = metricThreshold(metric);
   const trend = trends.find(t => t.metric === metric);
 
   if (metric === 'Memory') {

@@ -933,7 +933,7 @@ def get_latest_forecast_evaluation(
                     h["model_ready"] = bool(value)
                 elif field.startswith("contribution_") and field.endswith("_percent") and value is not None:
                     metric_key = field[len("contribution_"):-len("_percent")]
-                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO"}.get(metric_key, metric_key)
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO", "networksent": "NetworkSent", "networkrecv": "NetworkRecv", "process": "Process", "dongle": "Dongle", "hand_scanner": "HandScanner", "passport_reader": "PassportReader", "2d_scanner": "2DScanner", "phone_charger": "PhoneCharger", "keyboard": "Keyboard", "msr": "MSR", "pos_idle": "POS_Idle"}.get(metric_key, metric_key)
                     if "feature_contributions" not in h:
                         h["feature_contributions"] = {}
                     if metric_name not in h["feature_contributions"]:
@@ -941,7 +941,7 @@ def get_latest_forecast_evaluation(
                     h["feature_contributions"][metric_name]["pct"] = float(value)
                 elif field.startswith("contribution_") and field.endswith("_score") and value is not None:
                     metric_key = field[len("contribution_"):-len("_score")]
-                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO"}.get(metric_key, metric_key)
+                    metric_name = {"cpu": "CPU", "memory": "Memory", "disk_io": "DiskIO", "networksent": "NetworkSent", "networkrecv": "NetworkRecv", "process": "Process", "dongle": "Dongle", "hand_scanner": "HandScanner", "passport_reader": "PassportReader", "2d_scanner": "2DScanner", "phone_charger": "PhoneCharger", "keyboard": "Keyboard", "msr": "MSR", "pos_idle": "POS_Idle"}.get(metric_key, metric_key)
                     if "feature_contributions" not in h:
                         h["feature_contributions"] = {}
                     if metric_name not in h["feature_contributions"]:
