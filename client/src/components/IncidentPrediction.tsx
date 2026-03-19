@@ -667,7 +667,6 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
           <span style={{ width: 12 }}></span>
           <span style={{ width: 52, textAlign: 'center', color: '#e2e8f0' }}>위험도</span>
         </div>
-      </div>
     </div>
   );
 }
