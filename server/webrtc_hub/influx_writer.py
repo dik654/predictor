@@ -38,6 +38,29 @@ log.info("ThreadPoolExecutor initialized with 50 workers for InfluxDB writes")
 
 KST_OFFSET = timedelta(hours=9)
 
+# 한글 → 영문 매핑
+DEVICE_NAME_MAP = {
+    "동글이": "dongle",
+    "스캐너-핸드스캐너": "hand_scanner",
+    "여권리더기": "passport_reader",
+    "스캐너-2D스캐너": "2d_scanner",
+    "휴대폰충전기": "phone_charger",
+    "키보드": "keyboard",
+    "MSR": "msr",
+}
+DEVICE_STATUS_MAP = {"연결": 1, "실패": 0, "미사용": -1}
+
+BODY_TYPE_MAP = {
+    "주변장치 체크": "peripheral_check",
+    "승인 처리시간": "payment_approval_time",
+    "승인 처리결과": "payment_approval_result",
+    "영수증프린터 커버상태": "receipt_printer_cover",
+    "영수증 용지상태": "receipt_paper_status",
+}
+
+# 주변장치 영문 필드 목록 (ECOD feature용)
+PERIPHERAL_FIELDS = ["dongle", "hand_scanner", "passport_reader", "2d_scanner", "phone_charger", "keyboard", "msr"]
+
 
 def _parse_timestamp(timestamp: str) -> datetime:
     """C# 에이전트 타임스탬프(KST, timezone-naive)를 UTC datetime으로 변환."""
@@ -457,6 +480,71 @@ async def update_forecast_actual(
         return False
 
 
+def get_latest_peripheral_status(
+    agent_id: str,
+    bucket: str | None = None,
+) -> Dict:
+    """Query latest peripheral device status with disconnection time.
+    Returns {device: {"status": 1/0/-1, "since": "ISO timestamp" or null}}
+    """
+    target_bucket = bucket if bucket is not None else INFLUX_BUCKET
+    if not client:
+        return {}
+    try:
+        query_api = client.query_api()
+
+        # 1. 최신 상태 가져오기
+        query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -24h)
+          |> filter(fn: (r) => r._measurement == "peripheral_status")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> last()
+        '''
+        tables = query_api.query(query)
+        latest: Dict = {}
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in PERIPHERAL_FIELDS and value is not None:
+                    latest[field] = int(value)
+
+        # 2. 실패(0) 장치의 마지막 연결(1) 시점 조회
+        result: Dict = {}
+        for device in PERIPHERAL_FIELDS:
+            status = latest.get(device)
+            if status is None:
+                result[device] = {"status": None, "since": None}
+                continue
+
+            since = None
+            if status == 0:
+                # 마지막으로 연결(1)이었던 시점 = 끊어진 시점
+                since_query = f'''
+                from(bucket: "{target_bucket}")
+                  |> range(start: -7d)
+                  |> filter(fn: (r) => r._measurement == "peripheral_status")
+                  |> filter(fn: (r) => r.agent_id == "{agent_id}")
+                  |> filter(fn: (r) => r._field == "{device}" and r._value == 1)
+                  |> last()
+                '''
+                try:
+                    since_tables = query_api.query(since_query)
+                    for t in since_tables:
+                        for r in t.records:
+                            since = str(r.get_time())
+                except Exception:
+                    pass
+
+            result[device] = {"status": status, "since": since}
+
+        return result
+    except Exception as e:
+        log.warning(f"Failed to query peripheral status: {e}")
+        return {}
+
+
 def get_latest_accuracy(
     agent_id: str,
     metric: str,
@@ -582,12 +670,18 @@ def get_historical_metrics(
     try:
         import numpy as np
 
+        # metrics measurement에서 연속값 가져오기
+        all_metric_fields = ["cpu", "memory", "disk_io", "network_sent_bytes", "network_received_bytes"]
+        # process_ 접두사 필드도 포함
+        field_filter = " or ".join(f'r._field == "{f}"' for f in all_metric_fields)
+        field_filter += ' or r._field =~ /^process_/'
+
         query = f'''
         from(bucket: "{target_bucket}")
           |> range(start: -{hours}h)
           |> filter(fn: (r) => r._measurement == "metrics")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
-          |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io")
+          |> filter(fn: (r) => {field_filter})
           |> aggregateWindow(every: {resolution_minutes}m, fn: mean, createEmpty: false)
           |> sort(columns: ["_time"], desc: false)
         '''
@@ -596,27 +690,79 @@ def get_historical_metrics(
         tables = query_api.query(query)
 
         # Collect values by field
-        fields: Dict[str, list] = {"cpu": [], "memory": [], "disk_io": []}
+        fields: Dict[str, list] = {f: [] for f in all_metric_fields}
+        process_fields: Dict[str, list] = {}
         for table in tables:
             for record in table.records:
                 field = record.get_field()
                 value = record.get_value()
-                if field in fields and value is not None:
+                if value is None:
+                    continue
+                if field in fields:
                     fields[field].append(float(value))
+                elif field.startswith("process_"):
+                    process_fields.setdefault(field, []).append(float(value))
 
-        # Ensure all fields have data and same length
-        min_len = min(len(v) for v in fields.values()) if all(fields.values()) else 0
+        # peripheral_status measurement에서 주변장치 이력 가져오기
+        periph_query = f'''
+        from(bucket: "{target_bucket}")
+          |> range(start: -{hours}h)
+          |> filter(fn: (r) => r._measurement == "peripheral_status")
+          |> filter(fn: (r) => r.agent_id == "{agent_id}")
+          |> aggregateWindow(every: {resolution_minutes}m, fn: last, createEmpty: true)
+          |> fill(usePrevious: true)
+          |> sort(columns: ["_time"], desc: false)
+        '''
+        periph_fields: Dict[str, list] = {f: [] for f in PERIPHERAL_FIELDS}
+        try:
+            periph_tables = query_api.query(periph_query)
+            for table in periph_tables:
+                for record in table.records:
+                    field = record.get_field()
+                    value = record.get_value()
+                    if field in periph_fields:
+                        periph_fields[field].append(float(value) if value is not None else -1)
+        except Exception as pe:
+            log.debug(f"No peripheral history for {agent_id}: {pe}")
+
+        # Ensure core fields have data and same length
+        core_fields = ["cpu", "memory", "disk_io"]
+        min_len = min(len(fields[f]) for f in core_fields) if all(fields[f] for f in core_fields) else 0
         if min_len < 20:
             log.debug(f"Not enough historical data for {agent_id}: {min_len} points")
             return None
 
-        result = {
+        result: Dict = {
             "cpu": np.array(fields["cpu"][:min_len]),
             "memory": np.array(fields["memory"][:min_len]),
             "disk_io": np.array(fields["disk_io"][:min_len]),
             "count": min_len,
         }
-        log.info(f"Fetched {min_len} historical points for {agent_id} ({hours}h, {resolution_minutes}m resolution)")
+
+        # 추가 필드: 길이 맞추기 (부족하면 0으로 패딩)
+        for f in ["network_sent_bytes", "network_received_bytes"]:
+            arr = fields.get(f, [])
+            if len(arr) >= min_len:
+                result[f] = np.array(arr[:min_len])
+            else:
+                result[f] = np.zeros(min_len)
+
+        # process 필드 (첫 번째 process_ 필드만 사용)
+        if process_fields:
+            first_proc = list(process_fields.values())[0]
+            result["process"] = np.array(first_proc[:min_len]) if len(first_proc) >= min_len else np.zeros(min_len)
+        else:
+            result["process"] = np.zeros(min_len)
+
+        # peripheral 필드
+        for pf in PERIPHERAL_FIELDS:
+            arr = periph_fields.get(pf, [])
+            if len(arr) >= min_len:
+                result[pf] = np.array(arr[:min_len])
+            else:
+                result[pf] = np.full(min_len, -1.0)
+
+        log.info(f"Fetched {min_len} historical points for {agent_id} ({hours}h, {resolution_minutes}m resolution, {len(result)-1} features)")
         return result
 
     except Exception as e:
@@ -890,10 +1036,9 @@ async def write_peripheral_status(
             .tag("agent_id", agent_id)
         _apply_store_tags(point, store_info)
 
-        status_map = {"연결": 1, "실패": 0, "미사용": -1}
         for device, status in peripherals.items():
-            point.field(device, status_map.get(status, -1))
-            point.field(f"{device}_raw_status", status)
+            field_name = DEVICE_NAME_MAP.get(device, device)
+            point.field(field_name, DEVICE_STATUS_MAP.get(status, -1))
 
         point.time(ts_dt)
 
@@ -953,11 +1098,16 @@ async def write_log_entry(
 
         point = Point("pos_logs") \
             .tag("agent_id", agent_id) \
-            .tag("body_type", body_type)
+            .tag("body_type", BODY_TYPE_MAP.get(body_type, body_type))
         _apply_store_tags(point, store_info)
 
         for k, v in key_values.items():
-            point.field(k, str(v))
+            field_name = DEVICE_NAME_MAP.get(k, k)
+            # 숫자로 변환 가능하면 숫자로 저장
+            try:
+                point.field(field_name, float(v))
+            except (ValueError, TypeError):
+                point.field(field_name, DEVICE_STATUS_MAP.get(v, 0))
 
         point.time(ts_dt)
 

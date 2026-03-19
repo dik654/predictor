@@ -46,6 +46,15 @@ class MetricBuffer:
     network_sent: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     network_recv: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     process_status: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    # 주변장치 상태 (1=연결, 0=실패, -1=미사용/데이터없음)
+    periph_dongle: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_hand_scanner: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_passport_reader: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_2d_scanner: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_phone_charger: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_keyboard: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    periph_msr: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
+    pos_idle: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))  # 1=유휴, 0=비유휴
     timestamps: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
 
 
@@ -135,6 +144,21 @@ class EnhancedAnomalyDetector:
         proc_val = 1 if any(v == "RUNNING" for v in process.values()) else 0
         buf.process_status.append(proc_val)
 
+        # 주변장치 상태 (Peripherals dict from server.py buffer)
+        periph = data.get("Peripherals", {})
+        buf.periph_dongle.append(periph.get("dongle", -1))
+        buf.periph_hand_scanner.append(periph.get("hand_scanner", -1))
+        buf.periph_passport_reader.append(periph.get("passport_reader", -1))
+        buf.periph_2d_scanner.append(periph.get("2d_scanner", -1))
+        buf.periph_phone_charger.append(periph.get("phone_charger", -1))
+        buf.periph_keyboard.append(periph.get("keyboard", -1))
+        buf.periph_msr.append(periph.get("msr", -1))
+
+        # POS 유휴 상태 판단: Process=RUNNING + 주변장치 데이터 없음(-1) = 비유휴(0)
+        has_periph_data = any(periph.get(k, -1) != -1 for k in ["dongle", "hand_scanner", "2d_scanner", "keyboard", "msr"])
+        is_idle = 1 if has_periph_data else 0
+        buf.pos_idle.append(is_idle)
+
         buf.timestamps.append(data.get("Timestamp", ""))
     
     def _get_dynamic_contamination(self, agent_id: str) -> float:
@@ -163,16 +187,26 @@ class EnhancedAnomalyDetector:
         results = []
         
         try:
-            # Combine metrics into multivariate array (6 features)
+            # Combine metrics into multivariate array (13 features)
             cpu_arr = np.array(buf.cpu)
             mem_arr = np.array(buf.memory)
             disk_arr = np.array(buf.disk_io)
             net_sent_arr = np.array(buf.network_sent)
             net_recv_arr = np.array(buf.network_recv)
             proc_arr = np.array(buf.process_status)
+            p_dongle = np.array(buf.periph_dongle)
+            p_hand_scanner = np.array(buf.periph_hand_scanner)
+            p_passport = np.array(buf.periph_passport_reader)
+            p_2d_scanner = np.array(buf.periph_2d_scanner)
+            p_phone_charger = np.array(buf.periph_phone_charger)
+            p_keyboard = np.array(buf.periph_keyboard)
+            p_msr = np.array(buf.periph_msr)
+            idle_arr = np.array(buf.pos_idle)
 
-            # Multivariate data matrix
-            X = np.column_stack([cpu_arr, mem_arr, disk_arr, net_sent_arr, net_recv_arr, proc_arr])
+            # Multivariate data matrix (14 features)
+            X = np.column_stack([cpu_arr, mem_arr, disk_arr, net_sent_arr, net_recv_arr, proc_arr,
+                                 p_dongle, p_hand_scanner, p_passport, p_2d_scanner, p_phone_charger, p_keyboard, p_msr,
+                                 idle_arr])
             
             # Dynamic contamination
             contamination = self._get_dynamic_contamination(agent_id)
@@ -212,7 +246,10 @@ class EnhancedAnomalyDetector:
                 confidence = 1.0 - score_normalized
             
             # Create result for multivariate analysis
-            vals_summary = f"CPU={cpu_arr[-1]:.1f}%, Mem={mem_arr[-1]:.1f}%, Disk={disk_arr[-1]:.2f}, NetSent={net_sent_arr[-1]:.0f}, NetRecv={net_recv_arr[-1]:.0f}, Proc={'ON' if proc_arr[-1] else 'OFF'}"
+            periph_ok = sum(1 for v in [p_dongle[-1], p_hand_scanner[-1], p_passport[-1], p_2d_scanner[-1], p_phone_charger[-1], p_keyboard[-1], p_msr[-1]] if v == 1)
+            periph_total = 7
+            idle_str = '유휴' if idle_arr[-1] else '비유휴'
+            vals_summary = f"CPU={cpu_arr[-1]:.1f}%, Mem={mem_arr[-1]:.1f}%, Disk={disk_arr[-1]:.2f}, NetSent={net_sent_arr[-1]:.0f}, NetRecv={net_recv_arr[-1]:.0f}, Proc={'ON' if proc_arr[-1] else 'OFF'}, Periph={periph_ok}/{periph_total}, POS={idle_str}"
             if severity == "critical":
                 multi_details = f"복합 지표 이상 심각 (score={score_normalized:.2f}). {vals_summary}"
             elif severity == "warning":
@@ -230,9 +267,9 @@ class EnhancedAnomalyDetector:
                 details=multi_details,
             ))
             
-            # Also provide per-metric breakdown using feature contributions
-            metric_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process"]
-            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1], net_sent_arr[-1], net_recv_arr[-1], proc_arr[-1]]
+            # Per-metric breakdown: 연속값만 (이산값은 개별 점수가 무의미 — 다변량 종합에만 사용)
+            metric_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv"]
+            metric_values = [cpu_arr[-1], mem_arr[-1], disk_arr[-1], net_sent_arr[-1], net_recv_arr[-1]]
             
             for i, (name, value) in enumerate(zip(metric_names, metric_values)):
                 # Simple univariate score approximation
@@ -476,12 +513,14 @@ class EnhancedAnomalyDetector:
             forecast_horizon = self._multi_resolution_forecast(
                 agent_id, metric_name, arr, interval_sec
             )
-            if metric_name == "CPU":
-                warning_threshold, critical_threshold = 80.0, 90.0
-            elif metric_name == "Memory":
-                warning_threshold, critical_threshold = 85.0, 95.0
-            else:  # DiskIO
-                warning_threshold, critical_threshold = 70.0, 85.0
+            _forecast_thresholds = {
+                "CPU": (80.0, 90.0),
+                "Memory": (85.0, 95.0),
+                "DiskIO": (70.0, 85.0),
+                "NetworkSent": (50000.0, 100000.0),
+                "NetworkRecv": (50000.0, 100000.0),
+            }
+            warning_threshold, critical_threshold = _forecast_thresholds.get(metric_name, (70.0, 85.0))
 
             for fh in forecast_horizon:
                 pred_value = fh["value"]
@@ -620,9 +659,10 @@ class EnhancedAnomalyDetector:
             ecod_results = self._run_multivariate_ecod(agent_id)
             detections.extend(ecod_results)
         
-        # 2. Cached AutoARIMA (CPU, Memory, DiskIO)
+        # 2. Cached AutoARIMA
         if run_arima:
-            for metric_name, values in [("CPU", buf.cpu), ("Memory", buf.memory), ("DiskIO", buf.disk_io)]:
+            for metric_name, values in [("CPU", buf.cpu), ("Memory", buf.memory), ("DiskIO", buf.disk_io),
+                                         ("NetworkSent", buf.network_sent), ("NetworkRecv", buf.network_recv)]:
                 result = self._run_cached_arima(agent_id, metric_name, values)
                 if result:
                     detections.append(result)

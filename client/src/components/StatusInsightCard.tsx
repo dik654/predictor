@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Crosshair, AlertOctagon, AlertTriangle, CheckCircle, Eye } from 'lucide-react';
 
 interface Detection {
   engine: string;
@@ -61,6 +62,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
         metric: m.metric,
         score: m.score,
         severity: m.severity,
+        description: m.details || '',
       })),
     };
   }, [detections]);
@@ -118,7 +120,8 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
 
   return (
     <div style={{
-      backgroundColor: '#1e293b',
+      backgroundColor: '#111827',
+      border: '1px solid #1f2937',
       borderRadius: '12px',
       padding: '16px',
       height: '100%',
@@ -132,18 +135,9 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
         alignItems: 'center', 
         justifyContent: 'space-between',
       }}>
-        <h3 style={{ margin: 0, fontSize: '14px', color: '#94a3b8' }}>
-          🎯 시스템 상태 분석
+        <h3 style={{ margin: 0, fontSize: '14px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Crosshair size={14} /> 시스템 상태 분석
         </h3>
-        {/* <div style={{
-          padding: '4px 12px',
-          borderRadius: '12px',
-          backgroundColor: healthScore >= 80 ? '#14532d' : healthScore >= 50 ? '#713f12' : '#7f1d1d',
-          fontSize: '14px',
-          fontWeight: 'bold',
-        }}>
-          ❤️ {healthScore}
-        </div> */}
       </div>
 
       {/* ECOD Current Status */}
@@ -153,6 +147,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
           border: `1px solid ${getStatusColor(ecodInsights.status).border}`,
           borderRadius: '8px',
           padding: '12px',
+          transition: 'all 0.3s ease',
         }}>
           <div style={{
             display: 'flex',
@@ -160,8 +155,8 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
             gap: '8px',
             marginBottom: '8px',
           }}>
-            <span style={{ fontSize: '18px' }}>
-              {ecodInsights.status === 'critical' ? '🚨' : ecodInsights.status === 'warning' ? '⚠️' : '✅'}
+            <span style={{ fontSize: '18px', display: 'flex', alignItems: 'center', color: getStatusColor(ecodInsights.status).text }}>
+              {ecodInsights.status === 'critical' ? <AlertOctagon size={18} /> : ecodInsights.status === 'warning' ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
             </span>
             <span style={{ 
               fontSize: '13px', 
@@ -180,18 +175,47 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
             {ecodInsights.message}
           </p>
           {/* Metric breakdown */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {ecodInsights.details.map((d, i) => (
-              <span key={i} style={{
-                padding: '2px 8px',
-                borderRadius: '4px',
-                fontSize: '10px',
-                backgroundColor: d.severity === 'warning' ? '#854d0e' : '#166534',
-                color: d.severity === 'warning' ? '#fef3c7' : '#dcfce7',
-              }}>
-                {d.metric}: {typeof d.score === 'number' ? d.score.toFixed(3) : d.score}
-              </span>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {ecodInsights.details.map((d, i) => {
+              const barColor = d.score >= 0.8 ? '#ef4444' : d.score >= 0.5 ? '#f59e0b' : '#22c55e';
+              const labelColor = d.score >= 0.8 ? '#fca5a5' : d.score >= 0.5 ? '#fcd34d' : '#86efac';
+              const labelText = d.score >= 0.8 ? '이상 감지' : d.score >= 0.5 ? '주의 필요' : '정상';
+              return (
+                <div key={i} style={{ marginBottom: '2px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '11px',
+                  }}>
+                    <span style={{ color: '#e2e8f0', minWidth: '80px', flexShrink: 0 }}>{d.metric}</span>
+                    <div style={{
+                      flex: 1,
+                      height: '6px',
+                      backgroundColor: 'rgba(255,255,255,0.1)',
+                      borderRadius: '3px',
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        width: `${Math.min(d.score * 100, 100)}%`,
+                        height: '100%',
+                        backgroundColor: barColor,
+                        borderRadius: '3px',
+                        transition: 'width 0.3s ease',
+                      }} />
+                    </div>
+                    <span style={{ color: labelColor, minWidth: '52px', textAlign: 'right', flexShrink: 0, fontSize: '10px', fontWeight: 600 }}>
+                      {labelText}
+                    </span>
+                  </div>
+                  {d.description && (
+                    <div style={{ fontSize: '9px', color: '#64748b', paddingLeft: '88px', marginTop: '1px' }}>
+                      {d.description}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -204,7 +228,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
           gap: '8px',
           marginBottom: '8px',
         }}>
-          <span style={{ fontSize: '16px' }}>🔮</span>
+          <span style={{ display: 'flex', alignItems: 'center', color: '#94a3b8' }}><Eye size={14} /></span>
           <span style={{ fontSize: '12px', color: '#94a3b8' }}>예측 경보</span>
         </div>
         
@@ -215,7 +239,7 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
             padding: '12px',
             textAlign: 'center',
           }}>
-            <span style={{ fontSize: '20px' }}>😊</span>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#22c55e' }}><CheckCircle size={20} /></span>
             <p style={{ 
               margin: '8px 0 0', 
               fontSize: '11px', 
@@ -238,8 +262,10 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
                   alignItems: 'center',
                   gap: '10px',
                 }}>
-                  <span style={{ fontSize: '16px' }}>
-                    {alert.severity === 'critical' ? '🔴' : '🟡'}
+                  <span style={{ display: 'flex', alignItems: 'center' }}>
+                    {alert.severity === 'critical'
+                      ? <span style={{width:8,height:8,borderRadius:'50%',backgroundColor:'#ef4444',display:'inline-block'}} />
+                      : <span style={{width:8,height:8,borderRadius:'50%',backgroundColor:'#f59e0b',display:'inline-block'}} />}
                   </span>
                   <div style={{ flex: 1 }}>
                     <div style={{ 

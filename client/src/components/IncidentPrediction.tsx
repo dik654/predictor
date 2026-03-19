@@ -490,9 +490,10 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                 {/* 값 셀: 미니 바 차트 */}
                 <div style={{ display: 'flex', gap: 3 }}>
                   {t.values.map((v, i) => {
-                    const pct = threshold ? Math.min((v / threshold.critical) * 100, 100) : 50;
-                    const isWarn = threshold && v >= threshold.warning;
-                    const isCrit = threshold && v >= threshold.critical;
+                    const val = v ?? 0;
+                    const pct = threshold ? Math.min((val / threshold.critical) * 100, 100) : 50;
+                    const isWarn = threshold && val >= threshold.warning;
+                    const isCrit = threshold && val >= threshold.critical;
                     const barColor = isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#3b82f6';
                     return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
@@ -513,7 +514,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                           fontSize: 10, fontWeight: 600,
                           color: isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#94a3b8',
                         }}>
-                          {v.toFixed(1)}{unit}
+                          {val.toFixed(1)}{unit}
                         </span>
                         <span style={{ fontSize: 8, color: '#475569' }}>{t.labels[i]}</span>
                       </div>

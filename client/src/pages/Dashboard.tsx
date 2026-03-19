@@ -10,8 +10,8 @@ interface InfluxMetric {
   cpu: number;
   memory: number;
   disk_io: number;
-  network_sent: number;
-  network_recv: number;
+  network_sent_bytes: number;
+  network_received_bytes: number;
 }
 
 interface InfluxDetection {
@@ -38,6 +38,7 @@ export function Dashboard() {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
   const [viewMode, setViewMode] = useState<ViewMode>('realtime');
   const [arimaMetric, setArimaMetric] = useState<string>('CPU');
+  const [ecodGroup, setEcodGroup] = useState<'system' | 'peripheral'>('system');
 
   const [dbMetrics, setDbMetrics] = useState<InfluxMetric[]>([]);
   const [dbDetections, setDbDetections] = useState<InfluxDetection[]>([]);
@@ -110,6 +111,13 @@ export function Dashboard() {
   const ecodNetSent = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'NetworkSent').slice(-CHART_POINTS);
   const ecodNetRecv = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'NetworkRecv').slice(-CHART_POINTS);
   const ecodProc = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Process').slice(-CHART_POINTS);
+  const ecodDongle = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Dongle').slice(-CHART_POINTS);
+  const ecodHandScanner = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'HandScanner').slice(-CHART_POINTS);
+  const ecodPassport = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'PassportReader').slice(-CHART_POINTS);
+  const ecod2dScanner = dbDetections.filter(d => d.engine === 'ecod' && d.metric === '2DScanner').slice(-CHART_POINTS);
+  const ecodPhoneCharger = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'PhoneCharger').slice(-CHART_POINTS);
+  const ecodKeyboard = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Keyboard').slice(-CHART_POINTS);
+  const ecodMsr = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'MSR').slice(-CHART_POINTS);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
   const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
   const peripheralAlerts = dbDetections.filter(d => d.engine === 'peripheral').slice(-20);
@@ -139,24 +147,39 @@ export function Dashboard() {
   const ecodChartOption = {
     title: { text: 'ECOD 다변량 이상 점수', left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
     tooltip: chartTooltip,
-    legend: { bottom: 0, data: ['종합', 'CPU', 'Memory', 'DiskIO', 'NetSent', 'NetRecv', 'Process'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+    legend: { bottom: 0, data: ecodGroup === 'system'
+      ? ['종합', 'CPU', 'Memory', 'DiskIO', 'NetSent', 'NetRecv', 'Process']
+      : ['종합', 'Dongle', 'HandScanner', 'Passport', '2DScanner', 'PhoneCharger', 'Keyboard', 'MSR'],
+      textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
     grid: chartGrid,
     xAxis: { type: 'category', data: ecodMulti.map(d => fmtTime(d.timestamp)), axisLabel: { color: '#64748b', fontSize: 10, rotate: 30 }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#334155' } } },
     yAxis: { type: 'value', name: 'Score', min: 0, max: 1, splitNumber: 4, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     series: [
       { name: '종합', type: 'line', data: ecodMulti.map(d => d.score), itemStyle: { color: '#f43f5e' }, lineStyle: { width: 2.5 }, smooth: true, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(244, 63, 94, 0.3)' }, { offset: 1, color: 'rgba(244, 63, 94, 0.02)' }] } }, symbol: 'none' },
-      { name: 'CPU', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-      { name: 'Memory', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-      { name: 'DiskIO', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-      { name: 'NetSent', type: 'line', data: ecodNetSent.map(d => d.score), itemStyle: { color: '#06b6d4' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-      { name: 'NetRecv', type: 'line', data: ecodNetRecv.map(d => d.score), itemStyle: { color: '#14b8a6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
-      { name: 'Process', type: 'line', data: ecodProc.map(d => d.score), itemStyle: { color: '#ec4899' }, lineStyle: { width: 1.5, type: 'dotted' }, smooth: true, symbol: 'none' },
+      // System metrics
+      ...(ecodGroup === 'system' ? [
+        { name: 'CPU', type: 'line', data: ecodCpu.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'Memory', type: 'line', data: ecodMem.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'DiskIO', type: 'line', data: ecodDisk.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'NetSent', type: 'line', data: ecodNetSent.map(d => d.score), itemStyle: { color: '#06b6d4' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'NetRecv', type: 'line', data: ecodNetRecv.map(d => d.score), itemStyle: { color: '#14b8a6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'Process', type: 'line', data: ecodProc.map(d => d.score), itemStyle: { color: '#ec4899' }, lineStyle: { width: 1.5, type: 'dotted' }, smooth: true, symbol: 'none' },
+      ] : [
+        // Peripheral metrics
+        { name: 'Dongle', type: 'line', data: ecodDongle.map(d => d.score), itemStyle: { color: '#3b82f6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'HandScanner', type: 'line', data: ecodHandScanner.map(d => d.score), itemStyle: { color: '#22c55e' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'Passport', type: 'line', data: ecodPassport.map(d => d.score), itemStyle: { color: '#f59e0b' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: '2DScanner', type: 'line', data: ecod2dScanner.map(d => d.score), itemStyle: { color: '#06b6d4' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'PhoneCharger', type: 'line', data: ecodPhoneCharger.map(d => d.score), itemStyle: { color: '#14b8a6' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'Keyboard', type: 'line', data: ecodKeyboard.map(d => d.score), itemStyle: { color: '#ec4899' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+        { name: 'MSR', type: 'line', data: ecodMsr.map(d => d.score), itemStyle: { color: '#a78bfa' }, lineStyle: { width: 1.5 }, smooth: true, symbol: 'none' },
+      ]),
     ],
   };
 
   // ARIMA 타임스탬프로 metrics 실제값 매칭
   const metricsMap = new Map(dbMetrics.map(m => [m.timestamp, m]));
-  const metricKeyMap: Record<string, keyof InfluxMetric> = { CPU: 'cpu', Memory: 'memory', DiskIO: 'disk_io' };
+  const metricKeyMap: Record<string, keyof InfluxMetric> = { CPU: 'cpu', Memory: 'memory', DiskIO: 'disk_io', NetworkSent: 'network_sent_bytes', NetworkRecv: 'network_received_bytes' };
   const metricKey = metricKeyMap[arimaMetric] || 'cpu';
   // 타임스탬프를 밀리초로 변환한 정렬 배열 (가까운 매칭용)
   const metricsTimes = useMemo(() =>
@@ -184,7 +207,7 @@ export function Dashboard() {
   // 잔차 영역: 두 라인 사이 band = lower(투명) + bandWidth(색상)
   const bandWidth = selectedArimaData.map(d => Math.abs(d.arima_deviation || 0));
 
-  // 상단/하단 y축 범위를 통일 → band 간격과 bar 높이가 같은 비율로 보임
+  // 상단/하단 동일 범위 (같은 y축 스케일)
   const allValues = [...arimaActual.filter((v): v is number => v != null), ...selectedArimaData.map(d => d.arima_predicted ?? 0), ...bandWidth];
   const sharedMax = Math.ceil(Math.max(30, ...allValues) * 1.1);
 
@@ -193,8 +216,8 @@ export function Dashboard() {
     tooltip: chartTooltip,
     legend: { bottom: 0, data: ['예측값', '실제값', '잔차'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
     grid: [
-      { left: '8%', right: '8%', top: '12%', bottom: '42%' },
-      { left: '8%', right: '8%', top: '72%', bottom: '12%' },
+      { left: '8%', right: '8%', top: '10%', bottom: '52%' },
+      { left: '8%', right: '8%', top: '58%', bottom: '10%' },
     ],
     xAxis: [
       { type: 'category', gridIndex: 0, data: selectedArimaData.map(d => fmtTime(d.timestamp)), axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#1f2937' } } },
@@ -241,6 +264,12 @@ export function Dashboard() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0a0e1a', color: '#e2e8f0', padding: '24px', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+      <style>{`
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
       {/* Header */}
       <header style={{
         ...card, padding: '14px 24px', marginBottom: '16px',
@@ -284,18 +313,28 @@ export function Dashboard() {
       {/* Charts Row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
         <div style={{ ...card, padding: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
+            {([['system', '시스템'], ['peripheral', '주변장치']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setEcodGroup(key)} style={{
+                padding: '3px 10px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',
+                backgroundColor: ecodGroup === key ? '#1e293b' : 'transparent',
+                color: ecodGroup === key ? '#e2e8f0' : '#475569',
+              }}>{label}</button>
+            ))}
+          </div>
           <ReactECharts option={ecodChartOption} style={{ height: '300px' }} />
         </div>
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
       </div>
 
       {/* Peripheral Status Cards */}
-      <PeripheralCards alerts={peripheralAlerts.map(a => ({ ...a, details: a.details || '' }))} />
+      <PeripheralCards />
 
       {/* Charts Row 2 - ARIMA */}
       <div style={{ ...card, padding: '16px', marginTop: '12px', marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
-          {(arimaMetrics.length > 0 ? arimaMetrics : ['CPU', 'Memory', 'DiskIO']).map(m => (
+          {(arimaMetrics.length > 0 ? arimaMetrics : ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv']).map(m => (
             <button key={m} onClick={() => setArimaMetric(m)} style={{
               padding: '3px 10px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
               borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',
@@ -304,7 +343,7 @@ export function Dashboard() {
             }}>{m}</button>
           ))}
         </div>
-        <ReactECharts option={arimaChartOption} style={{ height: '400px' }} />
+        <ReactECharts option={arimaChartOption} style={{ height: '500px' }} />
       </div>
 
       {/* Detection Table */}
@@ -331,8 +370,8 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {allDetections.map((d, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #1e293b' }}>
+                {allDetections.map((d) => (
+                  <tr key={`${d.timestamp}-${d.engine}-${d.metric}`} style={{ borderBottom: '1px solid #1e293b', animation: 'fadeSlideIn 0.3s ease' }}>
                     <td style={{ padding: '8px 10px' }}>
                       {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : '-'}
                     </td>

@@ -130,6 +130,9 @@ def make_pc() -> RTCPeerConnection:
 import time
 _last_ecod_time: dict = {}
 _last_arima_time: dict = {}
+
+# 주변장치 최신 상태 버퍼 (agent_id → {device_eng: 1/0/-1})
+_peripheral_buffer: dict = {}
 ECOD_INTERVAL = 10.0    # ECOD every 10 seconds
 ARIMA_INTERVAL = 60.0   # AutoARIMA every 60 seconds
 
@@ -199,9 +202,9 @@ def process_data(data: dict) -> dict:
                 h_min = fh["minutes"]
                 if h_min not in forecasts_by_horizon:
                     forecasts_by_horizon[h_min] = {}
-                metric_key = d.metric.lower()
-                if metric_key == "diskio":
-                    metric_key = "disk_io"
+                metric_key_map = {"cpu": "cpu", "memory": "memory", "diskio": "disk_io",
+                                   "networksent": "network_sent", "networkrecv": "network_recv"}
+                metric_key = metric_key_map.get(d.metric.lower(), d.metric.lower())
                 forecasts_by_horizon[h_min][metric_key] = fh["value"]
 
     # Update event state and fallback buffer
@@ -323,21 +326,15 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
             return
 
         store_info = payload.get("StoreInfo", {})
+        peripheral_merged: dict = {}
         for log_entry in payload.get("Logs", []):
             body_type = log_entry.get("BodyType", "")
             key_values = log_entry.get("KeyValues", {})
             if not key_values:
                 continue
             if body_type == "주변장치 체크":
-                asyncio.create_task(influx_writer.write_peripheral_status(
-                    agent_id,
-                    payload.get("Timestamp", ""),
-                    key_values,
-                    bucket=influx_writer.INFLUX_BUCKET,
-                    store_info=store_info,
-                ))
+                peripheral_merged.update(key_values)
             elif body_type:
-                # 승인 처리시간, 승인 처리결과, 영수증프린터 커버상태, 영수증 용지상태
                 asyncio.create_task(influx_writer.write_log_entry(
                     agent_id,
                     payload.get("Timestamp", ""),
@@ -346,10 +343,28 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
                     bucket=influx_writer.INFLUX_BUCKET,
                     store_info=store_info,
                 ))
+        if peripheral_merged:
+            # 버퍼에 최신 상태 저장 (영문 변환)
+            buf = _peripheral_buffer.setdefault(agent_id, {})
+            for dev_kr, status_kr in peripheral_merged.items():
+                dev_en = influx_writer.DEVICE_NAME_MAP.get(dev_kr, dev_kr)
+                buf[dev_en] = influx_writer.DEVICE_STATUS_MAP.get(status_kr, -1)
+
+            asyncio.create_task(influx_writer.write_peripheral_status(
+                agent_id,
+                payload.get("Timestamp", ""),
+                peripheral_merged,
+                bucket=influx_writer.INFLUX_BUCKET,
+                store_info=store_info,
+            ))
 
         if "CPU" not in payload:
             channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
             return
+
+        # metric 도착 시 주변장치 최신 상태를 payload에 합성 → ECOD에 포함
+        if agent_id in _peripheral_buffer:
+            payload["Peripherals"] = _peripheral_buffer[agent_id]
 
         try:
             result = process_data(payload)
@@ -580,6 +595,22 @@ async def api_forecast_vs_actual(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def api_peripheral_status(request: web.Request) -> web.Response:
+    """
+    Get latest peripheral device status from InfluxDB.
+    Returns {device: 1/0/-1} or empty if no data.
+    """
+    agent_id = request.query.get("agent_id", "V135-POS-03")
+    bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+
+    try:
+        data = influx_writer.get_latest_peripheral_status(agent_id, bucket=bucket)
+        return web.json_response({"agent_id": agent_id, "devices": data})
+    except Exception as e:
+        log.warning(f"Error querying peripheral status: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def api_forecast_evaluation(request: web.Request) -> web.Response:
     """
     Get the latest forecast evaluation for an agent.
@@ -633,7 +664,37 @@ async def api_recent_detections(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+HEARTBEAT_INTERVAL = 5  # seconds
+
+_heartbeat_task = None
+
+async def _heartbeat_loop():
+    """서버 → 클라이언트 주기적 heartbeat 전송."""
+    import time as _t
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
+        ts = int(_t.time() * 1000)
+        msg = json.dumps({"type": "heartbeat", "ts": ts})
+        for cid in list(hub.channels.keys()):
+            ch = hub.channels.get(cid)
+            if ch and ch.readyState == "open":
+                try:
+                    ch.send(msg)
+                except Exception:
+                    pass
+
+
+async def on_startup(app: web.Application):
+    global _heartbeat_task
+    _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+    log.info(f"Heartbeat started (interval={HEARTBEAT_INTERVAL}s)")
+
+
 async def on_shutdown(app: web.Application):
+    global _heartbeat_task
+    if _heartbeat_task:
+        _heartbeat_task.cancel()
+        _heartbeat_task = None
     coros = []
     for cid, pc in list(hub.pcs.items()):
         coros.append(pc.close())
@@ -656,7 +717,7 @@ async def http_logger(request: web.Request, handler):
         request.content_length,
     )
     # 등록되지 않은 경로로 POST 요청이 오면 경고 + body 출력
-    known_paths = {"/offer", "/health", "/who", "/api/accuracy",
+    known_paths = {"/offer", "/health", "/who", "/api/accuracy", "/api/peripheral-status",
                    "/api/forecast-vs-actual", "/api/forecast-evaluation",
                    "/api/recent-metrics", "/api/recent-detections"}
     if request.path not in known_paths:
@@ -684,8 +745,10 @@ def create_app() -> web.Application:
     app.router.add_get("/api/accuracy", api_accuracy)
     app.router.add_get("/api/forecast-vs-actual", api_forecast_vs_actual)
     app.router.add_get("/api/forecast-evaluation", api_forecast_evaluation)
+    app.router.add_get("/api/peripheral-status", api_peripheral_status)
     app.router.add_get("/api/recent-metrics", api_recent_metrics)
     app.router.add_get("/api/recent-detections", api_recent_detections)
+    app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
     cors = aiohttp_cors.setup(

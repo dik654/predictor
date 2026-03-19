@@ -32,27 +32,35 @@ log = logging.getLogger("forecast_evaluator")
 # Long-term ECOD config
 LONGTERM_WINDOW_DAYS = 7
 LONGTERM_RESOLUTION_MIN = 5  # 5-minute resolution for InfluxDB query
-LONGTERM_MIN_SAMPLES = 100   # Minimum data points to train
-RETRAIN_INTERVAL_SEC = 6 * 3600  # Retrain every 6 hours
+LONGTERM_MIN_SAMPLES = 100   # Minimum data points to train (5분 해상도 × 100 = 약 8시간)
+RETRAIN_INTERVAL_SEC = 24 * 3600  # 24시간마다 재학습
+RETRAIN_HOUR = 3    # 새벽 3시 30분에 재학습 (사람이 적은 시간대)
+RETRAIN_MINUTE = 30
 
 # Severity thresholds for ECOD score (percentile-based)
 ECOD_SCORE_WARNING = 0.7
 ECOD_SCORE_CRITICAL = 0.9
 
-# Rule-based scoring for binary features
-RULE_SCORE_DONGLE_FAIL = 0.3
-RULE_SCORE_SCANNER_FAIL = 0.2
-RULE_SCORE_MULTI_FAIL = 0.7  # Multiple peripherals failing
+# Rule-based scoring for peripheral failures (0=실패 시 가산)
+# -1(미사용)은 점수 0
+PERIPHERAL_SCORES = {
+    "dongle": 0.5,           # 동글: 결제 불가 → 치명적
+    "hand_scanner": 0.4,     # 핸드스캐너: 상품 스캔 → 결제 핵심
+    "2d_scanner": 0.3,       # 2D스캐너: QR/쿠폰 → 결제 관련이지만 핸드보다 낮음
+    "passport_reader": 0.1,  # 나머지: 추후 조정
+    "phone_charger": 0.1,
+    "keyboard": 0.1,
+    "msr": 0.1,
+}
+RULE_SCORE_MULTI_FAIL = 0.7  # 2개 이상 실패 시 최소 점수
 
 
 @dataclass
 class EventState:
     """Latest known state for event-driven data per agent."""
-    dongle: int = 1          # 1=connected, 0=disconnected
-    scanner_hand: int = 1
-    scanner_2d: int = 1
-    payment_time_sec: float = 0.0  # Last payment processing time
-    payment_updated: float = 0.0   # When payment_time was last updated
+    peripherals: Dict[str, int] = field(default_factory=lambda: {})  # {device_eng: 1/0/-1}
+    payment_time_sec: float = 0.0
+    payment_updated: float = 0.0
 
 
 @dataclass
@@ -124,37 +132,41 @@ class ForecastEvaluator:
         """Update event state from incoming data (peripherals, payment)."""
         state = self._ensure_event_state(agent_id)
 
-        logs = data.get("Logs", [])
-        for log_entry in logs:
-            body_type = log_entry.get("BodyType", "")
-            key_values = log_entry.get("KeyValues", {})
-
-            if body_type == "주변장치 체크":
-                for device, status in key_values.items():
-                    connected = 1 if status == "연결" else 0
-                    if "동글" in device:
-                        state.dongle = connected
-                    elif "핸드스캐너" in device:
-                        state.scanner_hand = connected
-                    elif "2D스캐너" in device:
-                        state.scanner_2d = connected
-
-            elif body_type == "결제":
-                elapsed = key_values.get("소요시간")
-                if elapsed is not None:
-                    state.payment_time_sec = float(elapsed)
-                    state.payment_updated = time.time()
+        # server.py에서 합성된 Peripherals dict 사용 (영문 변환 완료 상태)
+        peripherals = data.get("Peripherals")
+        if peripherals:
+            state.peripherals.update(peripherals)
 
     def update_fallback_buffer(self, agent_id: str, data: dict) -> None:
         """Accumulate data in fallback buffer for when InfluxDB is unavailable."""
         if agent_id not in self.fallback_buffers:
-            # Keep up to 2016 points (7 days at 5-minute resolution)
             self.fallback_buffers[agent_id] = deque(maxlen=2016)
 
-        cpu = data.get("CPU", 0)
-        memory = data.get("Memory", 0)
-        disk_io = data.get("DiskIO", 0)
-        self.fallback_buffers[agent_id].append([cpu, memory, disk_io])
+        network = data.get("Network", {})
+        process = data.get("Process", {})
+        proc_val = 1 if any(v == "RUNNING" for v in process.values()) else 0
+        peripherals = data.get("Peripherals", {})
+
+        has_periph = any(peripherals.get(k, -1) != -1 for k in ["dongle", "hand_scanner", "2d_scanner", "keyboard", "msr"])
+        is_idle = 1 if has_periph else 0
+
+        row = [
+            data.get("CPU", 0),
+            data.get("Memory", 0),
+            data.get("DiskIO", 0),
+            network.get("Sent", 0),
+            network.get("Recv", 0),
+            proc_val,
+            peripherals.get("dongle", -1),
+            peripherals.get("hand_scanner", -1),
+            peripherals.get("passport_reader", -1),
+            peripherals.get("2d_scanner", -1),
+            peripherals.get("phone_charger", -1),
+            peripherals.get("keyboard", -1),
+            peripherals.get("msr", -1),
+            is_idle,
+        ]
+        self.fallback_buffers[agent_id].append(row)
 
     def _get_training_data(self, agent_id: str) -> Optional[np.ndarray]:
         """Get training data from InfluxDB or fallback buffer."""
@@ -165,8 +177,19 @@ class ForecastEvaluator:
             resolution_minutes=LONGTERM_RESOLUTION_MIN,
         )
         if hist is not None and hist["count"] >= LONGTERM_MIN_SAMPLES:
-            X = np.column_stack([hist["cpu"], hist["memory"], hist["disk_io"]])
-            log.info(f"Training data from InfluxDB: {agent_id} ({X.shape[0]} points)")
+            from . import influx_writer as iw
+            cols = [hist["cpu"], hist["memory"], hist["disk_io"],
+                    hist.get("network_sent_bytes", np.zeros(hist["count"])),
+                    hist.get("network_received_bytes", np.zeros(hist["count"])),
+                    hist.get("process", np.zeros(hist["count"]))]
+            for pf in iw.PERIPHERAL_FIELDS:
+                cols.append(hist.get(pf, np.full(hist["count"], -1.0)))
+            # pos_idle: 주변장치 데이터가 있으면 유휴(1), 없으면 비유휴(0)
+            periph_cols = [hist.get(pf, np.full(hist["count"], -1.0)) for pf in iw.PERIPHERAL_FIELDS]
+            idle_col = np.array([1.0 if any(pc[i] != -1 for pc in periph_cols) else 0.0 for i in range(hist["count"])])
+            cols.append(idle_col)
+            X = np.column_stack(cols)
+            log.info(f"Training data from InfluxDB: {agent_id} ({X.shape[0]} points, {X.shape[1]} features)")
             return X
 
         # Fallback to buffer
@@ -205,12 +228,25 @@ class ForecastEvaluator:
             return False
 
     def _ensure_model(self, agent_id: str) -> bool:
-        """Ensure model exists and is up-to-date."""
+        """Ensure model exists and is up-to-date.
+        - 모델 없음: 즉시 학습 (데이터 부족하면 fallback)
+        - 모델 있음: 매일 새벽 3:30에 재학습
+        """
+        from datetime import datetime, timedelta, timezone
+        KST = timezone(timedelta(hours=9))
         now = time.time()
         last = self.last_retrain.get(agent_id, 0)
 
-        if agent_id not in self.models or (now - last) >= RETRAIN_INTERVAL_SEC:
+        if agent_id not in self.models:
+            # 최초: 즉시 학습
             return self._train_model(agent_id)
+
+        # 재학습: 24시간 경과 + 새벽 3:30 이후
+        if (now - last) >= RETRAIN_INTERVAL_SEC:
+            now_kst = datetime.now(KST)
+            if now_kst.hour == RETRAIN_HOUR and now_kst.minute >= RETRAIN_MINUTE:
+                log.info(f"Scheduled retrain for {agent_id} at {now_kst.strftime('%H:%M')}")
+                return self._train_model(agent_id)
 
         return True
 
@@ -225,25 +261,23 @@ class ForecastEvaluator:
         return percentile
 
     def _compute_rule_score(self, agent_id: str) -> float:
-        """Compute rule-based score from binary event features."""
+        """Compute rule-based score from peripheral failures.
+        0=실패 → 가산, 1=연결 → 0점, -1=미사용 → 0점
+        """
         state = self.event_states.get(agent_id)
-        if state is None:
+        if state is None or not state.peripherals:
             return 0.0
 
         score = 0.0
         failures = 0
 
-        if state.dongle == 0:
-            score += RULE_SCORE_DONGLE_FAIL
-            failures += 1
-        if state.scanner_hand == 0:
-            score += RULE_SCORE_SCANNER_FAIL
-            failures += 1
-        if state.scanner_2d == 0:
-            score += RULE_SCORE_SCANNER_FAIL
-            failures += 1
+        for device, weight in PERIPHERAL_SCORES.items():
+            status = state.peripherals.get(device)
+            if status == 0:  # 실패
+                score += weight
+                failures += 1
 
-        # Multiple failures compound
+        # 2개 이상 실패 시 최소 점수 보장
         if failures >= 2:
             score = max(score, RULE_SCORE_MULTI_FAIL)
 
@@ -358,15 +392,27 @@ class ForecastEvaluator:
         result.data_source = "influxdb" if agent_id in self.last_retrain else "buffer"
         rule_score = self._compute_rule_score(agent_id)
 
+        # 현재 주변장치/프로세스 상태 (미래에도 유지된다고 가정)
+        state = self.event_states.get(agent_id)
+        periph = state.peripherals if state else {}
+        from . import influx_writer as iw
+        periph_values = [float(periph.get(pf, -1)) for pf in iw.PERIPHERAL_FIELDS]
+        is_idle = 1.0 if any(periph.get(k, -1) != -1 for k in ["dongle", "hand_scanner", "2d_scanner", "keyboard", "msr"]) else 0.0
+
         for horizon_min, preds in sorted(forecasts.items()):
             cpu = preds.get("cpu", 0)
             mem = preds.get("memory", 0)
             disk = preds.get("disk_io", 0)
+            net_sent = preds.get("network_sent", 0)
+            net_recv = preds.get("network_recv", 0)
+            proc = 1.0  # process 상태는 현재 유지 가정
 
-            # Feed prediction vector into ECOD
-            feature_names = ["CPU", "Memory", "DiskIO"]
-            feature_values = [cpu, mem, disk]
-            point = np.array([[cpu, mem, disk]])
+            # 14차원 벡터: ARIMA 예측(연속) + 현재 상태(이산) + 유휴 여부
+            feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
+                             "Dongle", "HandScanner", "PassportReader", "2DScanner", "PhoneCharger", "Keyboard", "MSR",
+                             "POS_Idle"]
+            feature_values = [cpu, mem, disk, net_sent, net_recv, proc] + periph_values + [is_idle]
+            point = np.array([feature_values])
             feature_contribs: List[FeatureContribution] = []
             try:
                 raw_score = float(model.decision_function(point)[0])
