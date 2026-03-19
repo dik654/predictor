@@ -1183,7 +1183,8 @@ async def write_detection(
 
         point.field("score", float(score)) \
             .field("threshold", float(threshold)) \
-            .field("confidence", float(confidence))
+            .field("confidence", float(confidence)) \
+            .field("actual_value", float(value))
 
         if forecast is not None:
             point.field("arima_predicted", float(forecast))
@@ -1330,7 +1331,7 @@ def get_recent_detections(
                         "metric": metric,
                         "severity": severity,
                         "score": 0, "threshold": 0, "confidence": 0,
-                        "arima_predicted": None, "arima_deviation": None,
+                        "actual_value": None, "arima_predicted": None, "arima_deviation": None,
                         "details": record.values.get("details"),
                     }
 
@@ -1345,6 +1346,8 @@ def get_recent_detections(
                     rec["arima_predicted"] = float(value)
                 elif field == "arima_deviation" and value is not None:
                     rec["arima_deviation"] = float(value)
+                elif field == "actual_value" and value is not None:
+                    rec["actual_value"] = float(value)
 
         records = sorted(records_map.values(), key=lambda x: x["timestamp"])
         log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records")

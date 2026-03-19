@@ -229,8 +229,11 @@ export function IncidentPrediction({ evaluation, agentId }: IncidentPredictionPr
         <FeatureBreakdown worst={worst} horizons={horizons} />
       </div>
 
-      {/* 3. 타임라인 — 시간대별 위험도 차트 */}
-      <RiskTimelineChart horizons={horizons} />
+      {/* 3. 최종 위험도 + 시간대별 차트 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <RiskCalculationCard horizons={horizons} />
+        <RiskTimelineChart horizons={horizons} />
+      </div>
 
     </div>
   );
@@ -550,11 +553,16 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
         </div>
       </div>
 
-      {/* STEP 3: 위험도 계산 */}
-      <div>
-        <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
-          3 - 최종 위험도 계산
-        </h4>
+    </div>
+  );
+}
+
+function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
+  return (
+    <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
+      <h4 style={{ margin: '0 0 8px', fontSize: 14, color: '#e2e8f0' }}>
+        3 - 최종 위험도 계산
+      </h4>
         <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 12, lineHeight: 1.5 }}>
           이상 점수 x 신뢰도 = 위험도. 먼 미래일수록 신뢰도가 낮아져 위험도가 보정됩니다.
         </div>
@@ -568,7 +576,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
             이상 점수란?
           </div>
           <div>
-            STEP 1에서 예측한 CPU·메모리·DiskIO 값의 조합을 과거 7일간의 정상 패턴(ECOD 모델)과 비교한 결과입니다.
+            STEP 1에서 예측한 CPU·메모리·디스크·네트워크 값의 조합을 과거 7일간의 정상 패턴(ECOD 모델)과 비교한 결과입니다.
           </div>
           <div style={{
             display: 'flex', gap: 12, marginTop: 6, fontSize: 10,
