@@ -299,9 +299,34 @@ do_start() {
     $RUN_POS_SIM && check_dep dotnet
     $RUN_INFLUX  && check_dep docker
     if $RUN_INFLUX && [[ -z "$DC" ]]; then
-        echo -e "${RED}[ERROR] Neither 'docker compose' (V2 plugin) nor 'docker-compose' found.${NC}"
-        echo -e "${RED}        Install docker-compose-plugin or standalone docker-compose.${NC}"
-        exit 1
+        echo -e "${YELLOW}[INSTALL] docker compose not found. Installing docker-compose-plugin...${NC}"
+        if command -v apt-get &>/dev/null; then
+            # Docker 공식 저장소 등록
+            sudo install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+                | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            sudo apt-get update -qq && sudo apt-get install -y -qq docker-compose-plugin
+        elif command -v dnf &>/dev/null; then
+            sudo dnf install -y docker-compose-plugin
+        elif command -v brew &>/dev/null; then
+            brew install docker-compose
+            mkdir -p ~/.docker/cli-plugins
+            ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+        else
+            echo -e "${RED}[ERROR] Unsupported OS. Install docker-compose-plugin manually.${NC}"
+            exit 1
+        fi
+        # 재감지
+        if docker compose version &>/dev/null; then
+            DC="docker compose"
+        elif command -v docker-compose &>/dev/null; then
+            DC="docker-compose"
+        else
+            echo -e "${RED}[ERROR] docker-compose-plugin installation failed.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[INSTALL] docker compose installed successfully.${NC}"
     fi
 
     mkdir -p "$LOG_DIR"
