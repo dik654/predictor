@@ -41,6 +41,9 @@
 
 set -euo pipefail
 
+# 원본 인자 보존 (docker 그룹 재실행 시 사용)
+_ORIG_ARGS=("$@")
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$ROOT/.webrtc-hub.pids"
 LOG_DIR="$ROOT/logs"
@@ -298,6 +301,14 @@ do_start() {
     $RUN_CLIENT  && check_dep npm
     $RUN_POS_SIM && check_dep dotnet
     $RUN_INFLUX  && check_dep docker
+    # docker 권한 확인 — 현재 유저가 docker 소켓 접근 가능한지 체크
+    if $RUN_INFLUX && ! docker info &>/dev/null; then
+        echo -e "${YELLOW}[FIX] docker permission denied. Adding $USER to docker group...${NC}"
+        sudo usermod -aG docker "$USER"
+        # newgrp 대신 sg로 현재 스크립트를 docker 그룹 권한으로 재실행
+        echo -e "${YELLOW}[FIX] Re-executing script with docker group...${NC}"
+        exec sg docker -c "\"$0\" $(printf '%q ' "${_ORIG_ARGS[@]}")"
+    fi
     if $RUN_INFLUX && [[ -z "$DC" ]]; then
         echo -e "${YELLOW}[INSTALL] docker compose not found. Installing docker-compose-plugin...${NC}"
         if command -v apt-get &>/dev/null; then
