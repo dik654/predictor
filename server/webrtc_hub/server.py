@@ -6,8 +6,10 @@ Receives data from C# agents via WebRTC DataChannel and runs anomaly detection.
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import Dict, Set, Optional, Any
 
 import click
@@ -38,6 +40,7 @@ for _noisy in (
     "aioice", "aiortc", "aiohttp.access", "aiohttp.server", "aiohttp.web",
     "urllib3", "urllib3.connectionpool",
     "influxdb_client", "influxdb_client.client", "influxdb_client.client.write_api",
+    "asyncio",
 ):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
@@ -136,20 +139,20 @@ _peripheral_buffer: dict = {}
 ECOD_INTERVAL = 10.0    # ECOD every 10 seconds
 ARIMA_INTERVAL = 60.0   # AutoARIMA every 60 seconds
 
+# Thread pool for CPU-intensive anomaly detection (avoids blocking event loop)
+_detect_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="detect")
 
-def process_data(data: dict) -> dict:
-    """Process incoming data through enhanced anomaly detector."""
+
+def _compute_detection_flags(data: dict):
+    """Compute which detection engines to run based on timing intervals (lightweight)."""
     agent_id = data.get("AgentId", "unknown")
 
-    # Use record's simulated timestamp instead of wall-clock time
-    # This allows ARIMA to run on schedule even during fast data replay
     try:
         ts_str = data.get("Timestamp", "").rstrip("Z")
         record_ts = datetime.fromisoformat(ts_str).timestamp()
     except (ValueError, AttributeError):
-        record_ts = time.time()  # Fallback to wall-clock if parsing fails
+        record_ts = time.time()
 
-    # Determine what to run this cycle
     run_ecod = False
     run_arima = False
 
@@ -158,15 +161,12 @@ def process_data(data: dict) -> dict:
         _last_ecod_time[agent_id] = record_ts
         run_ecod = True
 
-    # Use absolute value for timing to handle both forward and reverse chronological order
     last_arima = _last_arima_time.get(agent_id, None)
     if last_arima is None:
-        # First record - always run ARIMA on first data point
         _last_arima_time[agent_id] = record_ts
         run_arima = True
         log.debug(f"[TIMING] First record for {agent_id}, ARIMA enabled")
     else:
-        # Subsequent records - use absolute time difference
         time_diff = abs(record_ts - last_arima)
         if time_diff >= ARIMA_INTERVAL:
             _last_arima_time[agent_id] = record_ts
@@ -175,9 +175,12 @@ def process_data(data: dict) -> dict:
         else:
             log.debug(f"[TIMING] ARIMA skipped for {agent_id}: diff={time_diff:.0f}s < {ARIMA_INTERVAL}s")
 
-    # Run detection with calculated intervals
-    # run_ecod and run_arima are determined by interval checks above
-    result = detector.detect(data, run_ecod=run_ecod, run_arima=run_arima)
+    return run_ecod, run_arima
+
+
+def _post_process_detection(data: dict, result) -> dict:
+    """Post-process detection results: logging, forecast eval, influx writes (runs on event loop)."""
+    agent_id = data.get("AgentId", "unknown")
 
     # Log detections
     for d in result.detections:
@@ -188,13 +191,11 @@ def process_data(data: dict) -> dict:
         elif d.engine == "ensemble":
             log.info(f"ENSEMBLE: score={d.score:.3f}, severity={d.severity}")
         elif d.engine == "peripheral":
-            # 연속 실패는 처음(3회), 이후 100회 단위로만 출력
             count = int(d.value)
             if count == 3 or count % 100 == 0:
                 log.info(f"PERIPHERAL {d.metric}: {d.details}")
-    
+
     # Run forecast evaluation: collect ARIMA predictions per horizon
-    # and evaluate them with long-term ECOD
     forecasts_by_horizon: dict = {}
     for d in result.detections:
         if d.engine == "arima" and d.forecast_horizon:
@@ -258,6 +259,71 @@ def process_data(data: dict) -> dict:
 
     return result_dict
 
+
+
+async def _handle_detection_async(client_id: str, channel, data: dict, payload: dict, store_info: dict):
+    """Run anomaly detection in thread pool and send results (non-blocking)."""
+    agent_id = payload.get("AgentId", "unknown")
+
+    # Merge peripheral state
+    if agent_id in _peripheral_buffer:
+        payload["Peripherals"] = _peripheral_buffer[agent_id]
+
+    try:
+        # Compute flags on event loop (lightweight)
+        run_ecod, run_arima = _compute_detection_flags(payload)
+
+        # Run heavy detection in thread pool
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _detect_executor,
+            partial(detector.detect, payload, run_ecod=run_ecod, run_arima=run_arima),
+        )
+
+        # Post-process on event loop (logging + influx writes)
+        result_dict = _post_process_detection(payload, result)
+    except Exception as e:
+        log.error("process_data FAILED for %s: %s", agent_id, e, exc_info=True)
+        result_dict = {"raw_metrics": {"CPU": payload.get("CPU", 0), "Memory": payload.get("Memory", 0), "DiskIO": payload.get("DiskIO", 0)}, "detections": []}
+
+    try:
+        asyncio.create_task(influx_writer.write_metrics(
+            agent_id,
+            payload.get("Timestamp"),
+            result_dict.get("raw_metrics", {}),
+            bucket=influx_writer.INFLUX_BUCKET,
+            full_data=payload
+        ))
+    except Exception as e:
+        log.error("write_metrics FAILED for %s: %s", agent_id, e, exc_info=True)
+
+    asyncio.create_task(tracker.compare_actual_async(
+        payload.get("AgentId"),
+        payload.get("Timestamp"),
+        result_dict.get("raw_metrics", {})
+    ))
+
+    for det in result_dict.get("detections", []):
+        if det.get("engine") == "arima" and det.get("forecast_horizon"):
+            for fh in det.get("forecast_horizon", []):
+                asyncio.create_task(influx_writer.write_forecast(
+                    payload.get("AgentId"),
+                    payload.get("Timestamp"),
+                    det.get("metric"),
+                    fh.get("minutes"),
+                    fh.get("value"),
+                    bucket=influx_writer.INFLUX_BUCKET,
+                    store_info=store_info,
+                ))
+                tracker.record(
+                    payload.get("AgentId"),
+                    det.get("metric"),
+                    payload.get("Timestamp"),
+                    fh.get("minutes"),
+                    fh.get("value")
+                )
+
+    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
 
 
 def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
@@ -362,54 +428,8 @@ def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
             channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
             return
 
-        # metric 도착 시 주변장치 최신 상태를 payload에 합성 → ECOD에 포함
-        if agent_id in _peripheral_buffer:
-            payload["Peripherals"] = _peripheral_buffer[agent_id]
-
-        try:
-            result = process_data(payload)
-        except Exception as e:
-            log.error("process_data FAILED for %s: %s", agent_id, e, exc_info=True)
-            result = {"raw_metrics": {"CPU": payload.get("CPU", 0), "Memory": payload.get("Memory", 0), "DiskIO": payload.get("DiskIO", 0)}, "detections": []}
-
-        try:
-            asyncio.create_task(influx_writer.write_metrics(
-                agent_id,
-                payload.get("Timestamp"),
-                result.get("raw_metrics", {}),
-                bucket=influx_writer.INFLUX_BUCKET,
-                full_data=payload
-            ))
-        except Exception as e:
-            log.error("write_metrics FAILED for %s: %s", agent_id, e, exc_info=True)
-
-        asyncio.create_task(tracker.compare_actual_async(
-            payload.get("AgentId"),
-            payload.get("Timestamp"),
-            result.get("raw_metrics", {})
-        ))
-
-        for det in result.get("detections", []):
-            if det.get("engine") == "arima" and det.get("forecast_horizon"):
-                for fh in det.get("forecast_horizon", []):
-                    asyncio.create_task(influx_writer.write_forecast(
-                        payload.get("AgentId"),
-                        payload.get("Timestamp"),
-                        det.get("metric"),
-                        fh.get("minutes"),
-                        fh.get("value"),
-                        bucket=influx_writer.INFLUX_BUCKET,
-                        store_info=store_info,
-                    ))
-                    tracker.record(
-                        payload.get("AgentId"),
-                        det.get("metric"),
-                        payload.get("Timestamp"),
-                        fh.get("minutes"),
-                        fh.get("value")
-                    )
-
-        channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+        # Heavy detection runs in thread pool; ack sent after completion
+        asyncio.create_task(_handle_detection_async(client_id, channel, data, payload, store_info))
         return
 
     # Default: echo

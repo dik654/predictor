@@ -142,25 +142,8 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
     Returns:
         True if successful, False otherwise
     """
-    import time
-    global client, write_api, _last_reconnect
-
-    # Reconnect every 60 seconds to avoid stale write_api state
-    now = time.time()
-    if now - _last_reconnect > 60:
-        log.debug("Periodic write_api reconnection")
-        client = None
-        write_api = None
-        _last_reconnect = now
-
-    if not client or not write_api:
-        log.warning(f"InfluxDB not connected (client={client is not None}, api={write_api is not None}). Reconnecting...")
-        # Try to reconnect if connection was closed
-        init_influx()
-        if not client or not write_api:
-            log.error(f"Reconnection failed. Skipping write.")
-            return False
-        log.info(f"Reconnection successful")
+    # Reconnection is handled inside _write() (runs in thread pool)
+    # to avoid blocking the asyncio event loop.
 
     try:
         # Parse timestamp string to datetime object
@@ -227,14 +210,22 @@ async def write_metrics(agent_id: str, timestamp: str, raw_metrics: Dict, bucket
 
         # Run blocking write in thread pool to avoid blocking event loop
         def _write():
-            global client, write_api
+            global client, write_api, _last_reconnect
             try:
                 log.debug(f"[WRITE] Starting write_metrics for {agent_id} to bucket={bucket}")
                 log.debug(f"[WRITE] Data: cpu={raw_metrics.get('CPU'):.1f}, mem={raw_metrics.get('Memory'):.1f}, disk={raw_metrics.get('DiskIO'):.1f}")
 
-                # Use global write_api if available, otherwise initialize
-                if write_api is None:
-                    log.debug("[WRITE] write_api is None, initializing")
+                # Periodic reconnection (runs in thread pool, not event loop)
+                import time
+                now = time.time()
+                if now - _last_reconnect > 60:
+                    log.debug("Periodic write_api reconnection (in executor)")
+                    client = None
+                    write_api = None
+                    _last_reconnect = now
+
+                if not client or not write_api:
+                    log.info("InfluxDB not connected. Reconnecting in executor...")
                     init_influx()
 
                 if write_api is None:
