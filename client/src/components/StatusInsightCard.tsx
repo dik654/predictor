@@ -25,8 +25,13 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
   // ECOD 분석 결과 해설 (항상 표시)
   const ecodInsights = useMemo(() => {
     const ecodResults = detections.filter(d => d.engine === 'ecod');
-    const multivariate = ecodResults.find(d => d.metric === 'Multivariate');
-    const metrics = ecodResults.filter(d => d.metric !== 'Multivariate');
+    // 같은 metric이 여러 ECOD 사이클에서 올 수 있으므로 최신 값만 사용
+    const latestByMetric = new Map<string, typeof ecodResults[0]>();
+    for (const d of ecodResults) {
+      latestByMetric.set(d.metric, d);
+    }
+    const multivariate = latestByMetric.get('Multivariate');
+    const metrics = [...latestByMetric.values()].filter(d => d.metric !== 'Multivariate');
     
     // 데이터 없을 때 기본값
     if (!multivariate) {
