@@ -251,7 +251,7 @@ export function Dashboard() {
   const arimaChartOption = {
     title: { text: `AutoARIMA 예측 vs 실제 (${arimaMetric})`, left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
     tooltip: chartTooltip,
-    legend: { bottom: 0, data: ['예측값', '실제값', '잔차', '경고 임계값', '위험 임계값'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+    legend: { bottom: 0, data: ['예측값', '실제값', '잔차', '임계값'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
     grid: [
       { left: '8%', right: '8%', top: '10%', bottom: '52%' },
       { left: '8%', right: '8%', top: '58%', bottom: '10%' },
@@ -296,9 +296,10 @@ export function Dashboard() {
           return 'rgba(59, 130, 246, 0.5)';
         }, borderRadius: [2, 2, 0, 0] },
       },
-      // Threshold lines (per-point)
-      { name: '경고 임계값', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: selectedArimaData.map(d => d.threshold || null), itemStyle: { color: '#fbbf24' }, lineStyle: { width: 1, type: 'dashed' }, smooth: false, symbol: 'none' },
-      { name: '위험 임계값', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: selectedArimaData.map(d => (d.threshold || 0) * 1.5 || null), itemStyle: { color: '#ef4444' }, lineStyle: { width: 1, type: 'dashed' }, smooth: false, symbol: 'none' },
+      // Threshold reference (latest value as fixed horizontal line)
+      { name: '임계값', type: 'line', xAxisIndex: 1, yAxisIndex: 1,
+        data: selectedArimaData.map(() => arimaThresholds.length > 0 ? arimaThresholds[arimaThresholds.length - 1] : null),
+        itemStyle: { color: '#fbbf24' }, lineStyle: { width: 1, type: 'dashed' }, smooth: false, symbol: 'none' },
     ],
   };
 
@@ -427,6 +428,11 @@ export function Dashboard() {
             ))}
           </div>
         </div>
+        <div style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.6', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #1e293b' }}>
+          <b style={{ color: '#94a3b8' }}>Score</b> — ECOD: 학습 데이터 내 백분위 (0=정상중앙, 1=극단) · ARIMA: 잔차÷임계값 (1 초과=이상) · 주변장치: 꺼짐=1, 연결=0{' · '}
+          <b style={{ color: '#94a3b8' }}>신뢰도</b> — 학습 데이터 양 기반 (20건 미만 40%, 20~60건 70%, 60건+ 90%){' · '}
+          <b style={{ color: '#94a3b8' }}>심각도</b> — 시스템: Score 기준 (normal/warning/critical) · 주변장치: 꺼짐 상태 표시 (연결=정상, 꺼짐=이상, 미사용=해당없음)
+        </div>
         {allDetections.length === 0 ? (
           <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '40px' }}>
             InfluxDB에서 데이터 조회 중... ({viewMode === 'realtime' ? '2초' : '5초'} 주기 폴링)
@@ -439,9 +445,9 @@ export function Dashboard() {
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title={"ECOD: 학습 데이터 내 백분위 (0=정상, 1=극단)\nARIMA: 잔차/임계값 비율 (1 초과=이상)\n이진: 상태변화 없으면 0, 꺼지면 1"}>Score <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title={"학습 데이터 양 기반\n20건 미만: 40% (낮음)\n20~60건: 70% (보통)\n60건 이상: 90% (높음)"}>신뢰도 <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
-                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }} title={"Critical: 위험 임계값 초과 (CPU>90%, Mem>95%) 또는 장비 꺼짐\nWarning: 주의 임계값 초과 (CPU>80%, Mem>85%) 또는 Score≥0.95\nNormal: 정상 범위"}>심각도 <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
+                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
                 </tr>
               </thead>
@@ -457,7 +463,11 @@ export function Dashboard() {
                     <td style={{ padding: '8px 10px', textAlign: 'right' }}>
                       {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
                     </td>
-                    <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      {PERIPHERAL_METRICS.has(d.metric) && d.engine === 'ecod'
+                        ? <PeripheralStatusTag value={d.actual_value} />
+                        : <SeverityTag severity={d.severity} />}
+                    </td>
                     <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
                       {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
                     </td>
@@ -496,6 +506,20 @@ function EngineTag({ engine }: { engine: string }) {
   return (
     <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: c.bg, color: c.text, fontSize: '11px', fontWeight: 'bold' }}>
       {engine.toUpperCase()}
+    </span>
+  );
+}
+
+function PeripheralStatusTag({ value }: { value?: number | null }) {
+  // 1=연결, 0=꺼짐, -1=미사용
+  const v = value ?? -1;
+  const cfg = v === 1 ? { bg: '#14532d', text: '#86efac', dot: '#22c55e', label: '연결' }
+    : v === 0 ? { bg: '#7f1d1d', text: '#fca5a5', dot: '#ef4444', label: '꺼짐' }
+    : { bg: '#374151', text: '#9ca3af', dot: '#6b7280', label: '미사용' };
+  return (
+    <span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: cfg.bg, color: cfg.text, fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: cfg.dot }} />
+      {cfg.label}
     </span>
   );
 }
