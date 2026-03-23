@@ -232,6 +232,58 @@ class HistoricalDetector(EnhancedAnomalyDetector):
             return None
 
 
+def load_csv_base_data(file_path: Path, interval_min: int) -> List[dict]:
+    """
+    Load base data from InfluxDB-exported CSV (pivot format).
+    Aggregates into time windows matching interval_min.
+    """
+    import csv
+    log.info(f"Loading CSV base data from {file_path}...")
+
+    records = []
+    with open(file_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                records.append({
+                    "ts": datetime.fromisoformat(row["_time"].rstrip("Z")),
+                    "CPU": float(row.get("cpu", 0) or 0),
+                    "Memory": float(row.get("memory", 0) or 0),
+                    "DiskIO": float(row.get("disk_io", 0) or 0),
+                    "Network": {
+                        "Sent": int(float(row.get("network_sent_bytes", 0) or 0)),
+                        "Recv": int(float(row.get("network_received_bytes", 0) or 0)),
+                    },
+                })
+            except Exception:
+                continue
+
+    log.info(f"Loaded {len(records)} CSV records")
+
+    # Aggregate into interval windows
+    windows: Dict[datetime, list] = {}
+    for r in records:
+        ts = r["ts"]
+        key = ts.replace(second=0, microsecond=0, minute=(ts.minute // interval_min) * interval_min)
+        windows.setdefault(key, []).append(r)
+
+    result = []
+    for key in sorted(windows):
+        recs = windows[key]
+        result.append({
+            "CPU": float(np.mean([r["CPU"] for r in recs])),
+            "Memory": float(np.mean([r["Memory"] for r in recs])),
+            "DiskIO": float(np.mean([r["DiskIO"] for r in recs])),
+            "Network": {
+                "Sent": int(np.mean([r["Network"]["Sent"] for r in recs])),
+                "Recv": int(np.mean([r["Network"]["Recv"] for r in recs])),
+            },
+        })
+
+    log.info(f"Aggregated into {len(result)} windows at {interval_min}min intervals")
+    return result
+
+
 def load_and_aggregate_sample(file_path: Path, interval_min: int) -> List[dict]:
     """
     Load sample data and aggregate into time windows.
@@ -895,7 +947,10 @@ async def main(
         file_windows = []
         sample_path = Path(file_path)
         if sample_path.exists():
-            file_windows = load_and_aggregate_sample(sample_path, config.interval_min)
+            if sample_path.suffix == '.csv':
+                file_windows = load_csv_base_data(sample_path, config.interval_min)
+            else:
+                file_windows = load_and_aggregate_sample(sample_path, config.interval_min)
             log.info(f"Loaded {len(file_windows)} windows from {file_path}")
 
         # Merge: interleave file and influx data for pattern diversity
