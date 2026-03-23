@@ -140,20 +140,19 @@ export function Dashboard() {
           return;
         }
 
-        // 시점(timestamp) 목록 추출 (메트릭 기준)
-        const timeSlots = replayMetricsAll.current.map(m => m.timestamp);
+        // 재생 루프: DATA_LIMIT개 윈도우를 5초마다 1칸씩 밀기
+        // 최초 DATA_LIMIT번째부터 시작
+        replayIdx.current = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
 
-        // 재생 루프: 시점별로 DATA_LIMIT개씩 윈도우를 밀며 추가
         const step = () => {
           if (cancelled) return;
           let idx = replayIdx.current;
-          if (idx >= timeSlots.length) {
-            idx = 0; // 처음부터 다시 재생
-            replayIdx.current = 0;
+          if (idx >= replayMetricsAll.current.length) {
+            idx = DATA_LIMIT; // 처음부터 다시 재생
+            replayIdx.current = DATA_LIMIT;
           }
 
-          // 처음 DATA_LIMIT개까지는 윈도우 확장, 이후에는 슬라이딩
-          const windowEnd = idx + 1;
+          const windowEnd = idx;
           const windowStart = Math.max(0, windowEnd - DATA_LIMIT);
           setDbMetrics(replayMetricsAll.current.slice(windowStart, windowEnd));
 

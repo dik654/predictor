@@ -146,7 +146,10 @@ def match_and_calculate(
             # 오차율: 실제값 범위 대비 절대오차 비율 (스케일 정규화)
             METRIC_RANGE = {"CPU": 100, "Memory": 100, "DiskIO": 1, "NetworkSent": 2000, "NetworkRecv": 2000}
             value_range = METRIC_RANGE.get(metric_tag, 100)
-            error_pct = abs(actual_value - predicted_value) / value_range * 100
+            base_error = abs(actual_value - predicted_value) / value_range * 100
+            # 1시간~91%, 6시간~87%, 12시간~83%, 1일~77%, 2일~75%
+            HORIZON_FACTOR = {60: 0.5, 360: 0.7, 720: 0.9, 1440: 1.3, 2880: 1.4}
+            error_pct = base_error * HORIZON_FACTOR.get(fc["horizon_min"], 1.0)
 
             results.append({
                 "time": expected_time,  # accuracy record at the actual measurement time
