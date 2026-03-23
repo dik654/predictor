@@ -156,7 +156,17 @@ def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
     written = 0
     t0 = _time.time()
 
+    REQUIRED_HORIZONS = [60, 360, 720, 1440, 2880]
+
     for i, (ts_iso, horizons_data) in enumerate(sorted_slots):
+        # 없는 horizon은 가장 긴 예측값을 재사용
+        if horizons_data:
+            max_h = max(horizons_data.keys())
+            fallback = horizons_data[max_h]
+            for h in REQUIRED_HORIZONS:
+                if h not in horizons_data:
+                    horizons_data[h] = fallback.copy()
+
         eval_result = fe.evaluate(agent_id, ts_iso, horizons_data)
         eval_dict = fe.to_dict(eval_result)
 

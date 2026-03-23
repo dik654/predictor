@@ -482,12 +482,13 @@ class EnhancedAnomalyDetector:
                 forecast_df = res_sf.predict(h=max_steps)
                 forecasts = forecast_df["AutoARIMA"].values
 
+                _CLAMP_MAX = {"CPU": 100, "Memory": 100, "DiskIO": 100,
+                              "NetworkSent": 1_000_000, "NetworkRecv": 1_000_000}
                 for m in horizons:
                     steps = max(1, int(m * 60 / actual_res))
                     idx = min(steps - 1, len(forecasts) - 1)
                     pred = float(forecasts[idx])
-                    # Clamp to reasonable range
-                    pred = max(0, min(100, pred))
+                    pred = max(0, min(_CLAMP_MAX.get(metric_name, 100), pred))
                     res_label = f"{int(actual_res // 60)}분" if actual_res >= 60 else f"{int(actual_res)}초"
                     results.append({
                         "minutes": m,
