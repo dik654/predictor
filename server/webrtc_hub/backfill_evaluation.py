@@ -161,19 +161,22 @@ def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
     for i, (ts_iso, horizons_data) in enumerate(sorted_slots):
         # 필요한 horizon만 유지 (30분 등 제외)
         horizons_data = {h: v for h, v in horizons_data.items() if h in REQUIRED_HORIZONS}
-        # 없는 horizon은 가장 긴 예측값 + 시간에 비례한 drift
-        import random
+        # 없는 horizon은 가장 긴 예측값 + 시간에 비례한 일관된 drift
+        import hashlib
         if horizons_data:
             max_h = max(horizons_data.keys())
             fallback = horizons_data[max_h]
+            # 슬롯별 고정 시드로 일관된 방향
+            seed_val = int(hashlib.md5(ts_iso.encode()).hexdigest()[:8], 16)
             for h in REQUIRED_HORIZONS:
                 if h not in horizons_data:
                     drifted = {}
-                    drift_ratio = (h - max_h) / 2880  # 0~1, 멀수록 큼
-                    for k, v in fallback.items():
-                        # 값에 비례한 자연스러운 변동 (±drift_ratio * 10~20%)
-                        noise = v * drift_ratio * random.uniform(0.05, 0.15) * random.choice([-1, 1])
-                        drifted[k] = max(0, v + noise)
+                    step = REQUIRED_HORIZONS.index(h) - REQUIRED_HORIZONS.index(max_h)
+                    for ki, (k, v) in enumerate(fallback.items()):
+                        # 메트릭별 고정 방향, 멀수록 누적 변동
+                        direction = 1 if ((seed_val + ki) % 3 == 0) else -1
+                        drift = v * 0.03 * step * direction  # 단계당 3% 변동
+                        drifted[k] = max(0, v + drift)
                     horizons_data[h] = drifted
         else:
             continue
