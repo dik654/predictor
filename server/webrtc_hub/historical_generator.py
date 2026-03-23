@@ -654,10 +654,15 @@ def build_time_slots(config: HistoricalConfig, start_after: Optional[datetime] =
     now = now - timedelta(minutes=minutes_to_floor)
 
     if start_after:
-        # Floor start_after to interval boundary
-        start = start_after.replace(second=0, microsecond=0)
+        # Ensure naive datetime (strip timezone if present)
+        sa = start_after
+        if hasattr(sa, 'tzinfo') and sa.tzinfo:
+            sa = sa.replace(tzinfo=None)
+        # Floor to interval boundary, then advance one interval
+        start = sa.replace(second=0, microsecond=0)
         sa_floor = start.minute % config.interval_min
         start = start - timedelta(minutes=sa_floor) + timedelta(minutes=config.interval_min)
+        log.info(f"build_time_slots: start_after={sa} -> start={start}, now={now}")
     else:
         start = now - timedelta(hours=config.hours)
 
@@ -667,6 +672,10 @@ def build_time_slots(config: HistoricalConfig, start_after: Optional[datetime] =
     while ts <= now:
         slots.append(ts)
         ts += timedelta(minutes=config.interval_min)
+
+    if not slots:
+        log.error(f"No slots generated! start={start}, now={now}")
+        return slots
 
     log.info(f"Generated {len(slots)} time slots from {slots[0]} to {slots[-1]}")
     return slots
@@ -914,6 +923,9 @@ async def main(
 
         # Build time slots
         placeholder_slots = build_time_slots(config, start_after=start_after_dt)
+        if not placeholder_slots:
+            log.error("No time slots to fill!")
+            return
         total_slots = len(placeholder_slots)
 
         # Calculate actual warmup
