@@ -437,11 +437,11 @@ async def _write_to_bucket(dp, result, bucket, aid, ts_val, tracker, fe, forecas
         try:
             # Convert eng keys to Korean for write_peripheral_status
             _reverse_map = {v: k for k, v in DEVICE_NAME_MAP.items()}
-            periph_kr = {_reverse_map.get(k, k): ("정상" if v == 1 else ("미연결" if v == 0 else "미사용"))
+            periph_kr = {_reverse_map.get(k, k): ("연결" if v == 1 else ("실패" if v == 0 else "미사용"))
                          for k, v in dp["Peripherals"].items()}
             await write_peripheral_status(
                 agent_id=dp["AgentId"], timestamp=dp["Timestamp"],
-                peripheral_data=periph_kr, bucket=bucket,
+                peripherals=periph_kr, bucket=bucket,
                 store_info=dp.get("StoreInfo", {}),
             )
         except Exception as e:
