@@ -171,34 +171,53 @@ export function Dashboard() {
       }
     };
 
-    // 다음 루프를 위해 과거 데이터를 미리 fetch해두기
+    // 다음 루프를 위해 과거 데이터를 미리 fetch해두기 (detection 기준 시점 맞춤)
     const prefetchLoopStart = async () => {
       if (nextLoopMetrics.current !== null) return; // 이미 준비됨
       try {
-        const [mResp, dResp] = await Promise.all([
-          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
-          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
-        ]);
+        // detection 먼저 → 시작 시점 기준으로 metrics 가져오기
+        const dResp = await fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`);
+        if (cancelled) return;
+        const dData = dResp.ok ? await dResp.json() : { detections: [] };
+        const detections: InfluxDetection[] = dData.detections || [];
+        nextLoopDetections.current = detections;
+
+        let metricsUrl = `${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`;
+        if (detections.length > 0) {
+          const startFrom = new Date(new Date(detections[0].timestamp).getTime() - 60000).toISOString();
+          metricsUrl += `&after=${encodeURIComponent(startFrom)}`;
+        }
+        const mResp = await fetch(metricsUrl);
         if (cancelled) return;
         const mData = mResp.ok ? await mResp.json() : { metrics: [] };
-        const dData = dResp.ok ? await dResp.json() : { detections: [] };
         nextLoopMetrics.current = mData.metrics || [];
-        nextLoopDetections.current = dData.detections || [];
       } catch { /* ignore */ }
     };
 
-    // 초기 배치 fetch (가장 오래된 데이터)
+    // 초기 배치 fetch: detection 기준 시점부터 metrics를 맞춰 가져오기
+    // (metrics는 7일치, detections는 3일치 등 범위가 다를 수 있으므로)
     const fetchInitial = async () => {
       try {
-        const [mResp, dResp] = await Promise.all([
-          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
-          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
-        ]);
+        // 1) detections를 먼저 가져와서 가장 오래된 timestamp 확인
+        const dResp = await fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`);
+        if (cancelled) return 0;
+        const dData = dResp.ok ? await dResp.json() : { detections: [] };
+        const detections: InfluxDetection[] = dData.detections || [];
+        replayDetectionsAll.current = detections;
+
+        // 2) detection이 있으면 그 시작 시점 직전부터 metrics를 가져옴
+        let metricsUrl = `${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`;
+        if (detections.length > 0) {
+          const oldestDetTs = detections[0].timestamp;
+          // detection 시작 직전부터 metrics를 가져오기 위해 after 파라미터 사용
+          // after보다 큰 timestamp부터 가져오므로, 약간 앞선 시점을 기준으로 설정
+          const startFrom = new Date(new Date(oldestDetTs).getTime() - 60000).toISOString();
+          metricsUrl += `&after=${encodeURIComponent(startFrom)}`;
+        }
+        const mResp = await fetch(metricsUrl);
         if (cancelled) return 0;
         const mData = mResp.ok ? await mResp.json() : { metrics: [] };
-        const dData = dResp.ok ? await dResp.json() : { detections: [] };
         replayMetricsAll.current = mData.metrics || [];
-        replayDetectionsAll.current = dData.detections || [];
         return replayMetricsAll.current.length;
       } catch { return 0; }
     };
