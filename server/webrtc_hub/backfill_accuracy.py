@@ -147,9 +147,7 @@ def match_and_calculate(
             METRIC_RANGE = {"CPU": 100, "Memory": 100, "DiskIO": 1, "NetworkSent": 2000, "NetworkRecv": 2000}
             value_range = METRIC_RANGE.get(metric_tag, 100)
             base_error = abs(actual_value - predicted_value) / value_range * 100
-            # 1시간~91%, 6시간~87%, 12시간~83%, 1일~77%, 2일~75%
-            HORIZON_FACTOR = {60: 0.5, 360: 0.55, 720: 0.6, 1440: 1.3, 2880: 1.4}
-            error_pct = base_error * HORIZON_FACTOR.get(fc["horizon_min"], 1.0)
+            error_pct = base_error
 
             results.append({
                 "time": expected_time,  # accuracy record at the actual measurement time

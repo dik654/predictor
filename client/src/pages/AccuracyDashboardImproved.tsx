@@ -104,8 +104,18 @@ export function AccuracyDashboardImproved() {
     const normalErrors = rawErrors.filter(e => e <= maxNormalError);
     const outlierCount = rawErrors.filter(e => e > maxNormalError).length;
 
-    const excellent = normalErrors.filter(e => e < 5).length;
-    const good = normalErrors.filter(e => e >= 5 && e < 10).length;
+    // horizon별 허용 오차 기준 (먼 미래일수록 넓게)
+    // 설명: "1시간 예측은 5% 이내가 우수, 2일 예측은 30% 이내도 우수로 인정"
+    const HORIZON_THRESHOLD: Record<number, { excellent: number; good: number }> = {
+      60: { excellent: 5, good: 10 },
+      360: { excellent: 8, good: 15 },
+      720: { excellent: 12, good: 22 },
+      1440: { excellent: 18, good: 30 },
+      2880: { excellent: 25, good: 40 },
+    };
+    const th = HORIZON_THRESHOLD[selectedHorizon] || { excellent: 10, good: 20 };
+    const excellent = normalErrors.filter(e => e < th.excellent).length;
+    const good = normalErrors.filter(e => e >= th.excellent && e < th.good).length;
     const accuracy = normalErrors.length > 0 ? ((excellent + good * 0.8) / normalErrors.length * 100).toFixed(0) : '0';
 
     return {
