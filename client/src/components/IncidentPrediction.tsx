@@ -361,12 +361,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
   const CONTINUOUS_METRICS = ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv'];
   const contribs = [...rawContribs]
     .filter(c => CONTINUOUS_METRICS.some(m => m.toLowerCase() === c.metric.toLowerCase()))
-    .sort((a, b) => {
-      const findIdx = (m: string) => METRIC_ORDER.findIndex(o => o.toLowerCase() === m.toLowerCase());
-      const ai = findIdx(a.metric);
-      const bi = findIdx(b.metric);
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    });
+    .sort((a, b) => b.pct - a.pct);  // 기여도 높은 순
 
   if (contribs.length === 0) {
     return (
