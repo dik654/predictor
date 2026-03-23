@@ -40,6 +40,7 @@ export function Dashboard() {
   const [viewMode, setViewMode] = useState<ViewMode>('realtime');
   const [arimaMetric, setArimaMetric] = useState<string>('CPU');
   const [ecodGroup, setEcodGroup] = useState<'all' | 'system' | 'peripheral' | 'status'>('all');
+  const [historyEngine, setHistoryEngine] = useState<'all' | 'ecod' | 'arima' | 'peripheral'>('all');
 
   const [dbMetrics, setDbMetrics] = useState<InfluxMetric[]>([]);
   const [dbDetections, setDbDetections] = useState<InfluxDetection[]>([]);
@@ -122,7 +123,11 @@ export function Dashboard() {
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
   const latestDetections = dbDetections.slice(-30);
-  const allDetections = dbDetections.slice(-30).reverse();
+  const filteredDetections = historyEngine === 'all' ? dbDetections : dbDetections.filter(d => d.engine === historyEngine);
+  const allDetections = filteredDetections.slice(-50).reverse();
+  const ecodWarnings = ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical');
+  const arimaWarnings = arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical');
+  const arimaWarnMetrics = [...new Set(arimaWarnings.map(d => d.metric))];
   const metricsCount = dbMetrics.length;
   const healthScore = dbHealthScore;
   const isConnected = dbConnected;
@@ -301,9 +306,12 @@ export function Dashboard() {
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
         <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`CPU·메모리·디스크IO·네트워크 등 개별 지표 ${metricsCount}건 (5개 메트릭 × ${Math.round(metricsCount / 5)}회 수신)`} />
-        <StatCard title="ECOD 이상탐지" value={ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#f43f5e" icon={<Search size={14} />} desc="14개 지표를 동시 분석하여 정상 범위를 벗어난 항목 수 (아래 ECOD 차트에서 상세 확인)" />
-        <StatCard title="ARIMA 예측 경고" value={arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#8b5cf6" icon={<TrendingUp size={14} />} desc="과거 패턴 기반 예측값과 실제값의 차이가 임계값을 넘은 횟수 (아래 ARIMA 차트에서 상세 확인)" />
-        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} desc="평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수" />
+        <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => setHistoryEngine('ecod')}
+          desc={ecodWarnings.length > 0 ? `경고 메트릭: ${[...new Set(ecodWarnings.map(d => d.metric))].join(', ')}` : '14개 지표를 동시 분석하여 정상 범위를 벗어난 항목 수'} />
+        <StatCard title="ARIMA 예측 경고" value={arimaWarnings.length} color="#8b5cf6" icon={<TrendingUp size={14} />} onClick={() => setHistoryEngine('arima')}
+          desc={arimaWarnings.length > 0 ? `경고 메트릭: ${arimaWarnMetrics.join(', ')}` : '과거 패턴 기반 예측값과 실제값 비교 — 경고 없음'} />
+        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => setHistoryEngine('peripheral')}
+          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')}` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -344,9 +352,21 @@ export function Dashboard() {
 
       {/* Detection Table */}
       <div style={{ ...card, padding: '16px', marginTop: '12px' }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: '16px' }}>
-          탐지 히스토리 ({viewMode === 'realtime' ? '실시간' : 'DB 전체'})
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0, fontSize: '16px' }}>
+            탐지 히스토리 ({viewMode === 'realtime' ? '실시간' : 'DB 전체'})
+          </h3>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {([['all', '전체'], ['ecod', 'ECOD'], ['arima', 'ARIMA'], ['peripheral', '주변장치']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setHistoryEngine(key)} style={{
+                padding: '3px 10px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
+                borderRadius: '4px', border: '1px solid #1f2937', transition: 'all 0.15s',
+                backgroundColor: historyEngine === key ? '#1e293b' : 'transparent',
+                color: historyEngine === key ? '#e2e8f0' : '#cbd5e1',
+              }}>{label}</button>
+            ))}
+          </div>
+        </div>
         {allDetections.length === 0 ? (
           <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '40px' }}>
             InfluxDB에서 데이터 조회 중... ({viewMode === 'realtime' ? '2초' : '5초'} 주기 폴링)
@@ -392,9 +412,9 @@ export function Dashboard() {
   );
 }
 
-function StatCard({ title, value, color = '#3b82f6', icon, desc }: { title: string; value: number; color?: string; icon?: ReactNode; desc?: string }) {
+function StatCard({ title, value, color = '#3b82f6', icon, desc, onClick }: { title: string; value: number; color?: string; icon?: ReactNode; desc?: string; onClick?: () => void }) {
   return (
-    <div style={{ backgroundColor: '#111827', borderRadius: '10px', padding: '14px 16px', border: '1px solid #1f2937', borderTop: `2px solid ${color}` }}>
+    <div onClick={onClick} style={{ backgroundColor: '#111827', borderRadius: '10px', padding: '14px 16px', border: '1px solid #1f2937', borderTop: `2px solid ${color}`, cursor: onClick ? 'pointer' : 'default', transition: 'background-color 0.15s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 500 }}>
         {icon && <span style={{ color, display: 'flex' }}>{icon}</span>}
         {title}
