@@ -353,8 +353,54 @@ def load_from_influxdb(agent_id: str, bucket: str, hours: int = 72) -> List[dict
             elif field == "network_received_bytes":
                 records_map[ts]["Network"]["Recv"] = int(value)
 
+    # Load latest peripheral status
+    periph_query = f'''
+    from(bucket: "{bucket}")
+      |> range(start: -{hours}h)
+      |> filter(fn: (r) => r._measurement == "peripheral_status")
+      |> filter(fn: (r) => r.agent_id == "{agent_id}")
+      |> last()
+    '''
+    peripherals = {}
+    try:
+        periph_tables = query_api.query(periph_query)
+        for table in periph_tables:
+            for record in table.records:
+                peripherals[record.get_field()] = int(record.get_value()) if record.get_value() is not None else 1
+    except Exception:
+        pass
+
+    # Load latest process status
+    process_query = f'''
+    from(bucket: "{bucket}")
+      |> range(start: -{hours}h)
+      |> filter(fn: (r) => r._measurement == "metrics")
+      |> filter(fn: (r) => r.agent_id == "{agent_id}")
+      |> filter(fn: (r) => r._field =~ /^process_/)
+      |> last()
+    '''
+    process = {}
+    try:
+        proc_tables = query_api.query(process_query)
+        for table in proc_tables:
+            for record in table.records:
+                field = record.get_field()
+                # process_XXX -> XXX
+                name = field.replace("process_", "")
+                process[name] = int(record.get_value()) if record.get_value() is not None else 1
+    except Exception:
+        pass
+
     ic.close()
     result = sorted(records_map.values(), key=lambda x: x["ts"])
+
+    # Attach peripheral/process to all records so synthesize_data can carry them
+    if peripherals or process:
+        for rec in result:
+            rec["Peripherals"] = peripherals
+            rec["Process"] = process
+        log.info(f"Attached peripherals={list(peripherals.keys())}, process={list(process.keys())}")
+
     log.info(f"Loaded {len(result)} records from InfluxDB")
     return result
 
@@ -537,6 +583,10 @@ def synthesize_data(
     prev_sent = last_rec["Network"]["Sent"]
     prev_recv = last_rec["Network"]["Recv"]
 
+    # Carry forward peripheral/process status from base data
+    peripherals = last_rec.get("Peripherals", {})
+    process = last_rec.get("Process", {})
+
     data_points = []
     for i, ts in enumerate(slots):
         base = base_records[i % len(base_records)]
@@ -551,7 +601,7 @@ def synthesize_data(
             varied["Network"]["Sent"] = int(prev_sent * (1 - alpha) + varied["Network"]["Sent"] * alpha)
             varied["Network"]["Recv"] = int(prev_recv * (1 - alpha) + varied["Network"]["Recv"] * alpha)
 
-        data_points.append({
+        dp = {
             "AgentId": agent_id,
             "Timestamp": ts.isoformat() + "Z",
             "CPU": varied["CPU"],
@@ -567,7 +617,13 @@ def synthesize_data(
             },
             "_slot_index": i,
             "_nanos_offset": 0,
-        })
+        }
+        # Attach peripheral/process status (carry forward from last real data)
+        if peripherals:
+            dp["Peripherals"] = dict(peripherals)
+        if process:
+            dp["Process"] = {k: v for k, v in process.items()}
+        data_points.append(dp)
 
     # Inject anomaly events (skip blend window)
     num_events = _inject_events(data_points, rng)
@@ -899,7 +955,9 @@ async def main(
             for i, data_point in enumerate(data_points):
                 if i < len(fresh_slots):
                     data_point["Timestamp"] = fresh_slots[i].isoformat() + "Z"
-        log.info(f"Timestamps refreshed: {fresh_slots[0]} → {fresh_slots[-1]}")
+            log.info(f"Timestamps refreshed: {fresh_slots[0]} → {fresh_slots[-1]}")
+        else:
+            log.info(f"Using fixed timestamps: {data_points[0]['Timestamp']} → {data_points[-1]['Timestamp']}")
 
         # Connect to InfluxDB right before writing (avoids idle-timeout disconnect during Pass 1)
         # Set INFLUX_BUCKET so predict_tracker writes accuracy to the correct bucket
