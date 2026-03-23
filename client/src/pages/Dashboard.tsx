@@ -125,9 +125,19 @@ export function Dashboard() {
   const PERIPHERAL_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR']);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
   const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
-  const peripheralAlerts = dbDetections.filter(d =>
-    d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric) && (d.severity === 'warning' || d.severity === 'critical'))
-  ).slice(-50);
+  // 주변장치 이상: 최근 탐지에서 warning/critical인 고유 장치명
+  const peripheralWarnDevices = (() => {
+    const allPeriphDetections = dbDetections.filter(d =>
+      d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric))
+    );
+    // 각 장치의 가장 최근 탐지 결과 기준
+    const latestByDevice = new Map<string, typeof allPeriphDetections[0]>();
+    for (const d of allPeriphDetections) {
+      const prev = latestByDevice.get(d.metric);
+      if (!prev || d.timestamp > prev.timestamp) latestByDevice.set(d.metric, d);
+    }
+    return [...latestByDevice.values()].filter(d => d.severity === 'warning' || d.severity === 'critical');
+  })();
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
   const latestDetections = dbDetections.slice(-30);
@@ -237,12 +247,11 @@ export function Dashboard() {
   // 하단 잔차 차트: 잔차 + 임계값 기준 스케일
   const arimaThresholds = selectedArimaData.map(d => d.threshold || 0);
   const residualMax = Math.ceil(Math.max(1, ...bandWidth, ...arimaThresholds.map(t => t * 1.8)) * 1.1);
-  const avgThreshold = arimaThresholds.length > 0 ? arimaThresholds.reduce((a, b) => a + b, 0) / arimaThresholds.length : 0;
 
   const arimaChartOption = {
     title: { text: `AutoARIMA 예측 vs 실제 (${arimaMetric})`, left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
     tooltip: chartTooltip,
-    legend: { bottom: 0, data: ['예측값', '실제값', '잔차'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
+    legend: { bottom: 0, data: ['예측값', '실제값', '잔차', '경고 임계값', '위험 임계값'], textStyle: { color: '#94a3b8', fontSize: 11 }, itemWidth: 12, itemHeight: 8 },
     grid: [
       { left: '8%', right: '8%', top: '10%', bottom: '52%' },
       { left: '8%', right: '8%', top: '58%', bottom: '10%' },
@@ -286,14 +295,10 @@ export function Dashboard() {
           if (v > th) return 'rgba(251, 191, 36, 0.7)';
           return 'rgba(59, 130, 246, 0.5)';
         }, borderRadius: [2, 2, 0, 0] },
-        markLine: avgThreshold > 0 ? {
-          silent: true, symbol: 'none',
-          data: [
-            { yAxis: avgThreshold, lineStyle: { color: '#fbbf24', type: 'dashed', width: 1 }, label: { show: true, position: 'insideEndTop', formatter: '경고', color: '#fbbf24', fontSize: 10 } },
-            { yAxis: avgThreshold * 1.5, lineStyle: { color: '#ef4444', type: 'dashed', width: 1 }, label: { show: true, position: 'insideEndTop', formatter: '위험', color: '#ef4444', fontSize: 10 } },
-          ],
-        } : undefined,
       },
+      // Threshold lines (per-point)
+      { name: '경고 임계값', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: selectedArimaData.map(d => d.threshold || null), itemStyle: { color: '#fbbf24' }, lineStyle: { width: 1, type: 'dashed' }, smooth: false, symbol: 'none' },
+      { name: '위험 임계값', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: selectedArimaData.map(d => (d.threshold || 0) * 1.5 || null), itemStyle: { color: '#ef4444' }, lineStyle: { width: 1, type: 'dashed' }, smooth: false, symbol: 'none' },
     ],
   };
 
@@ -350,8 +355,8 @@ export function Dashboard() {
           desc={arimaWarnings.length > 0
             ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `최근 ${arimaData.length}건 — 경고 없음`} />
-        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')}` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
+        <StatCard title="주변장치 이상" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
+          desc={peripheralWarnDevices.length > 0 ? `이상 장치: ${peripheralWarnDevices.map(d => d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '7개 장치 모두 정상'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -434,9 +439,9 @@ export function Dashboard() {
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title="ECOD: 학습 데이터 내 백분위 (0=정상, 1=극단)&#10;ARIMA: 잔차/임계값 비율 (1 초과=이상)&#10;이진: 상태변화 없으면 0, 꺼지면 1">Score <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title="학습 데이터 양 기반&#10;20건 미만: 40% (낮음)&#10;20~60건: 70% (보통)&#10;60건 이상: 90% (높음)">신뢰도 <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
-                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }} title="Critical: 위험 임계값 초과 (CPU>90%, Mem>95%) 또는 장비 꺼짐&#10;Warning: 주의 임계값 초과 (CPU>80%, Mem>85%) 또는 Score≥0.95&#10;Normal: 정상 범위">심각도 <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title={"ECOD: 학습 데이터 내 백분위 (0=정상, 1=극단)\nARIMA: 잔차/임계값 비율 (1 초과=이상)\n이진: 상태변화 없으면 0, 꺼지면 1"}>Score <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title={"학습 데이터 양 기반\n20건 미만: 40% (낮음)\n20~60건: 70% (보통)\n60건 이상: 90% (높음)"}>신뢰도 <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
+                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }} title={"Critical: 위험 임계값 초과 (CPU>90%, Mem>95%) 또는 장비 꺼짐\nWarning: 주의 임계값 초과 (CPU>80%, Mem>85%) 또는 Score≥0.95\nNormal: 정상 범위"}>심각도 <span style={{ fontSize: '9px', color: '#64748b' }}>{'\u24d8'}</span></th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
                 </tr>
               </thead>
