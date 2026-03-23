@@ -38,9 +38,11 @@ const METRIC_KO: Record<string, string> = {
   Process: '프로세스', POS_Idle: 'POS 유휴', Multivariate: '종합',
 };
 
+const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
+
 const MODE_CONFIG = {
-  db:       { metricsLimit: 100, detectionsLimit: 200, pollInterval: 5_000 },
-  realtime: { metricsLimit: 100, detectionsLimit: 200, pollInterval: 2_000 },
+  db:       { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT * 15, pollInterval: 5_000 },
+  realtime: { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT * 15, pollInterval: 2_000 },
 } as const;
 
 export function Dashboard() {
@@ -131,8 +133,8 @@ export function Dashboard() {
   const ecodMsr = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'MSR').slice(-CHART_POINTS);
   const ecodIdle = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'POS_Idle').slice(-CHART_POINTS);
   const PERIPHERAL_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR']);
-  const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
-  const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
+  const ecodData = dbDetections.filter(d => d.engine === 'ecod');
+  const arimaData = dbDetections.filter(d => d.engine === 'arima');
   // 주변장치 이상: 최근 탐지에서 실제 꺼짐(actual_value=0)인 장치
   const peripheralWarnDevices = (() => {
     const allPeriphDetections = dbDetections.filter(d =>
@@ -174,12 +176,13 @@ export function Dashboard() {
   const ecodSystemWarns = ecodWarnings.filter(d => !BINARY_METRICS.has(d.metric) && d.metric !== 'Multivariate');
   const ecodSystemSummary = [...new Set(ecodSystemWarns.map(d => d.metric))].map(m => {
     const latest = ecodSystemWarns.filter(d => d.metric === m).slice(-1)[0];
-    return latest ? `${m} ${latest.details?.match(/[\d.]+%|[\d.]+bytes/)?.[0] || `score ${latest.score?.toFixed(2)}`}` : m;
+    const ko = METRIC_KO[m] || m;
+    return latest ? `${ko} ${latest.details?.match(/[\d.]+%|[\d.]+bytes/)?.[0] || `score ${latest.score?.toFixed(2)}`}` : ko;
   });
   const ecodSummary = (() => {
     const parts: string[] = [];
     if (ecodSystemSummary.length > 0) parts.push(`시스템: ${ecodSystemSummary.join(', ')}`);
-    if (ecodBinaryWarns.length > 0) parts.push(`장치 꺼짐/비정상: ${ecodBinaryWarns.length}개 (${ecodBinaryWarns.slice(0, 3).join(', ')}${ecodBinaryWarns.length > 3 ? ' 등' : ''})`);
+    if (ecodBinaryWarns.length > 0) parts.push(`장치 꺼짐/비정상: ${ecodBinaryWarns.length}개 (${ecodBinaryWarns.slice(0, 3).map(m => METRIC_KO[m] || m).join(', ')}${ecodBinaryWarns.length > 3 ? ' 등' : ''})`);
     return parts.length > 0 ? parts.join(' | ') : '';
   })();
   const metricsCount = dbMetrics.length;
@@ -195,20 +198,23 @@ export function Dashboard() {
   // 상세 텍스트를 한국어로 변환
   const fmtDetails = (d: InfluxDetection) => {
     if (!d.details) return d.arima_predicted ? `예측: ${d.arima_predicted.toFixed(1)}` : '-';
-    const ko = METRIC_KO[d.metric] || d.metric;
-    if (d.engine === 'arima') return d.details; // ARIMA는 이미 한국어
-    // "Memory 81.0% (상위 27%)" → "81.0% — 학습 데이터 상위 27% 수준"
-    // "NetworkSent 627bytes — 상위 100% (p95=888.6)" → "627bytes — 상위 100%"
-    const m = d.details.match(/[\d.]+[%a-z]*/i);
-    const val = m ? m[0] : '';
-    const top = d.details.match(/상위 (\d+)%/);
+    // 영문 메트릭명을 한글로 치환
+    let text = d.details;
+    for (const [eng, ko] of Object.entries(METRIC_KO)) {
+      text = text.replace(new RegExp(`\\b${eng}\\b`, 'g'), ko);
+    }
+    if (d.engine === 'arima') return text;
+    // "메모리 81.0% (상위 27%)" → "81.0% — 상위 27% (보통)"
+    const val = text.match(/[\d.]+[%a-z]*/i);
+    const valStr = val ? val[0] : '';
+    const top = text.match(/상위 (\d+)%/);
     const topPct = top ? top[1] : null;
     if (topPct) {
       const pctNum = parseInt(topPct);
       const level = pctNum <= 5 ? '매우 높음' : pctNum <= 20 ? '높음' : pctNum <= 80 ? '보통' : '낮음';
-      return `${val} — 상위 ${topPct}% (${level})`;
+      return `${valStr} — 상위 ${topPct}% (${level})`;
     }
-    return d.details.replace(d.metric, ko);
+    return text;
   };
 
   const chartTooltip = {
@@ -386,17 +392,17 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`InfluxDB에 저장된 최근 ${metricsCount}개 시점\n(CPU·메모리·디스크IO·네트워크)\n주변장치는 POS 유휴 상태에서만 수집`} />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`최근 ${DATA_LIMIT}개 시점 조회 기준\n(CPU·메모리·디스크IO·네트워크)\n주변장치는 POS 유휴 상태에서만 수집`} />
         <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => scrollToHistory('ecod')}
           desc={ecodWarnings.length > 0
-            ? `최근 ${ecodData.length}건 중 ${ecodWarnings.length}건 경고 — ${ecodSummary}`
-            : `최근 ${ecodData.length}건 분석 — 이상 없음`} />
+            ? `동일 ${DATA_LIMIT}개 시점 기준 ${ecodWarnings.length}건 경고 — ${ecodSummary}`
+            : `동일 ${DATA_LIMIT}개 시점 기준 — 이상 없음`} />
         <StatCard title="ARIMA 예측 경고" value={arimaWarnings.length} color="#8b5cf6" icon={<TrendingUp size={14} />} onClick={() => scrollToHistory('arima')}
           desc={arimaWarnings.length > 0
-            ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
-            : `최근 ${arimaData.length}건 — 경고 없음`} />
+            ? `동일 ${DATA_LIMIT}개 시점 기준 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${METRIC_KO[d.metric] || d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
+            : `동일 ${DATA_LIMIT}개 시점 기준 — 경고 없음`} />
         <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralWarnDevices.length > 0 ? `꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d.metric] || d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개 꺼짐)` : '7개 장치 모두 연결'} />
+          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d.metric] || d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '최신 상태 기준 — 7개 장치 모두 연결'} />
       </div>
 
       {/* Charts Row 1 */}

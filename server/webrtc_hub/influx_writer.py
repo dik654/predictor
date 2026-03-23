@@ -626,8 +626,13 @@ def get_latest_accuracy(
                 elif field == "within_3sigma" and value == 1:
                     within_3sigma_count += 1
 
-        # Convert map to list, only include records with error_pct
-        data["records"] = [r for r in records_map.values() if r["error_percent"] is not None]
+        # Convert map to list, rename error_percent → error_pct for frontend
+        for r in records_map.values():
+            if r["error_percent"] is not None:
+                r["error_pct"] = r.pop("error_percent")
+            else:
+                r.pop("error_percent", None)
+        data["records"] = [r for r in records_map.values() if "error_pct" in r]
 
         log.info(f"✅ Query accuracy: agent={agent_id}, metric={metric}, horizon={horizon_min} -> {len(data['records'])} records with error_pct")
 
@@ -1268,31 +1273,29 @@ def get_recent_metrics(
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
               or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
+          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
           |> tail(n: {limit})
         '''
 
         query_api = client.query_api()
         tables = query_api.query(query)
 
-        records_map: dict = {}
+        records = []
         for table in tables:
             for record in table.records:
                 ts = str(record.get_time())
-                field = record.get_field()
-                value = record.get_value()
+                vals = record.values
+                records.append({
+                    "timestamp": ts,
+                    "agent_id": agent_id,
+                    "cpu": float(vals.get("cpu", 0) or 0),
+                    "memory": float(vals.get("memory", 0) or 0),
+                    "disk_io": float(vals.get("disk_io", 0) or 0),
+                    "network_sent_bytes": float(vals.get("network_sent_bytes", 0) or 0),
+                    "network_received_bytes": float(vals.get("network_received_bytes", 0) or 0),
+                })
 
-                if ts not in records_map:
-                    records_map[ts] = {
-                        "timestamp": ts,
-                        "agent_id": agent_id,
-                        "cpu": 0, "memory": 0, "disk_io": 0,
-                        "network_sent_bytes": 0, "network_received_bytes": 0,
-                    }
-
-                if field in ("cpu", "memory", "disk_io", "network_sent_bytes", "network_received_bytes") and value is not None:
-                    records_map[ts][field] = float(value)
-
-        records = sorted(records_map.values(), key=lambda x: x["timestamp"])
+        records = sorted(records, key=lambda x: x["timestamp"])
         log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records")
         return records
 
