@@ -1259,11 +1259,21 @@ def _query_metrics_with_range(
     limit: int,
     target_bucket: str,
     range_str: str,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
-    """Helper: query metrics with a specific time range."""
+    """Helper: query metrics with a specific time range.
+
+    order="latest": tail(n:limit) – most recent N records
+    order="oldest": limit(n:limit) – oldest N records from range
+    after: ISO timestamp cursor – only return data strictly after this time
+    """
+    range_start = after if after else range_str
+    limiter = f"limit(n: {limit})" if order == "oldest" else f"tail(n: {limit})"
+
     query = f'''
     from(bucket: "{target_bucket}")
-      |> range(start: {range_str})
+      |> range(start: {range_start})
       |> filter(fn: (r) => r._measurement == "metrics")
       |> filter(fn: (r) => r.agent_id == "{agent_id}")
       |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
@@ -1271,7 +1281,7 @@ def _query_metrics_with_range(
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
       |> group()
       |> sort(columns: ["_time"], desc: false)
-      |> tail(n: {limit})
+      |> {limiter}
     '''
 
     query_api = client.query_api()
@@ -1299,10 +1309,15 @@ def get_recent_metrics(
     agent_id: str,
     limit: int = 100,
     bucket: str | None = None,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
     """
     Query recent raw metrics from InfluxDB.
-    Progressively expands time range (-1d → -3d → -7d) until enough data is found.
+
+    order="latest": progressively expands range (-1d→-3d→-7d) to get most recent N.
+    order="oldest": gets oldest N from -7d range (fast, uses limit instead of tail).
+    after: ISO timestamp cursor for pagination (e.g. "2026-03-20T12:00:00Z").
 
     Returns list of dicts with timestamp, cpu, memory, disk_io, network_sent, network_received.
     """
@@ -1312,8 +1327,24 @@ def get_recent_metrics(
         return []
 
     try:
+        if after:
+            # 커서 기반: after 시점 이후 데이터만 조회 (범위 자동 결정)
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, "-7d",
+                                                order=order, after=after)
+            log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (after={after})")
+            return records
+
+        if order == "oldest":
+            # 가장 오래된 데이터부터: -7d 범위에서 limit(n:)으로 빠르게 조회
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, "-7d",
+                                                order="oldest")
+            log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (oldest, range=-7d)")
+            return records
+
+        # order="latest": 점진적 확장
         for range_str in ["-1d", "-3d", "-7d"]:
-            records = _query_metrics_with_range(agent_id, limit, target_bucket, range_str)
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, range_str,
+                                                order="latest")
             if len(records) >= limit:
                 log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (range={range_str})")
                 return records
@@ -1330,11 +1361,20 @@ def _query_detections_with_range(
     limit: int,
     target_bucket: str,
     range_str: str,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
-    """Helper: query detections with a specific time range."""
+    """Helper: query detections with a specific time range.
+
+    order="latest": keep last `limit` unique timestamps
+    order="oldest": keep first `limit` unique timestamps
+    after: ISO timestamp cursor – only return data strictly after this time
+    """
+    range_start = after if after else range_str
+
     query = f'''
     from(bucket: "{target_bucket}")
-      |> range(start: {range_str})
+      |> range(start: {range_start})
       |> filter(fn: (r) => r._measurement == "anomaly_detection")
       |> filter(fn: (r) => r.agent_id == "{agent_id}")
     '''
@@ -1381,11 +1421,15 @@ def _query_detections_with_range(
 
     records = sorted(records_map.values(), key=lambda x: x["timestamp"])
 
-    # 시점(timestamp) 기준으로 마지막 limit개만 유지
+    # 시점(timestamp) 기준으로 limit개만 유지
     unique_times = sorted(set(r["timestamp"] for r in records))
     if len(unique_times) > limit:
-        cutoff = unique_times[-limit]
-        records = [r for r in records if r["timestamp"] >= cutoff]
+        if order == "oldest":
+            cutoff = unique_times[limit - 1]
+            records = [r for r in records if r["timestamp"] <= cutoff]
+        else:
+            cutoff = unique_times[-limit]
+            records = [r for r in records if r["timestamp"] >= cutoff]
 
     return records
 
@@ -1394,10 +1438,15 @@ def get_recent_detections(
     agent_id: str,
     limit: int = 200,
     bucket: str | None = None,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
     """
     Query recent anomaly detection results from InfluxDB.
-    Progressively expands time range (-1d → -3d → -7d) until enough data is found.
+
+    order="latest": progressively expands range to get most recent N timestamps.
+    order="oldest": gets oldest N timestamps from -7d range.
+    after: ISO timestamp cursor for pagination.
 
     Returns list of dicts with timestamp, engine, metric, value, score, threshold,
     severity, confidence, forecast, residual, details.
@@ -1408,9 +1457,22 @@ def get_recent_detections(
         return []
 
     try:
+        if after:
+            records = _query_detections_with_range(agent_id, limit, target_bucket, "-7d",
+                                                   order=order, after=after)
+            log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (after={after})")
+            return records
+
+        if order == "oldest":
+            records = _query_detections_with_range(agent_id, limit, target_bucket, "-7d",
+                                                   order="oldest")
+            log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (oldest, range=-7d)")
+            return records
+
+        # order="latest": 점진적 확장
         for range_str in ["-1d", "-3d", "-7d"]:
-            records = _query_detections_with_range(agent_id, limit, target_bucket, range_str)
-            # detections는 시점당 여러 레코드가 있으므로 unique timestamp 수로 판단
+            records = _query_detections_with_range(agent_id, limit, target_bucket, range_str,
+                                                   order="latest")
             unique_times = set(r["timestamp"] for r in records)
             if len(unique_times) >= limit:
                 log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (range={range_str})")

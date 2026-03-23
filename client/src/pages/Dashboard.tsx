@@ -41,13 +41,14 @@ const METRIC_KO: Record<string, string> = {
   passport_reader: '여권리더기', phone_charger: '충전기', keyboard: '키보드', msr: 'MSR',
 };
 
-const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
+const DATA_LIMIT = 100; // 화면에 표시할 윈도우 크기 (시점 기준)
 
-const DB_REPLAY_BATCH = 1000;   // DB에서 한 번에 가져올 시점 수
+const DB_FETCH_BATCH = 200;     // DB 모드: 한 번에 가져올 시점 수
+const DB_PREFETCH_THRESHOLD = 50; // 남은 데이터가 이만큼 이하면 다음 배치 미리 로드
 const DB_REPLAY_INTERVAL = 5000; // 재생 간격 (ms)
 
 const MODE_CONFIG = {
-  db:       { metricsLimit: DB_REPLAY_BATCH, detectionsLimit: DB_REPLAY_BATCH, pollInterval: 5_000 },
+  db:       { metricsLimit: DB_FETCH_BATCH, detectionsLimit: DB_FETCH_BATCH, pollInterval: 5_000 },
   realtime: { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT, pollInterval: 2_000 },
 } as const;
 
@@ -123,82 +124,114 @@ export function Dashboard() {
     } catch { /* ignore */ }
   }, [serverUrl]);
 
-  // DB 재생: 전체 데이터를 한 번에 가져와서 시점별로 하나씩 추가
+  // DB 재생: 배치 단위로 데이터를 가져오면서 슬라이딩 윈도우 재생
+  const isFetchingBatch = useRef(false);
+
   useEffect(() => {
     if (viewMode !== 'db') return;
 
     prevMetricsLen.current = 0;
     prevDetectionsLen.current = 0;
     replayIdx.current = 0;
+    replayMetricsAll.current = [];
+    replayDetectionsAll.current = [];
+    isFetchingBatch.current = false;
     setDbMetrics([]);
     setDbDetections([]);
     setReplayPlaying(true);
 
     let cancelled = false;
 
-    (async () => {
-      // 전체 데이터 한 번에 로드
+    // 다음 배치를 가져오는 함수 (커서 기반)
+    const fetchBatch = async (afterTs?: string) => {
+      if (isFetchingBatch.current) return;
+      isFetchingBatch.current = true;
       try {
+        const orderParam = afterTs ? 'oldest' : 'oldest';
+        const afterParam = afterTs ? `&after=${encodeURIComponent(afterTs)}` : '';
         const [mResp, dResp] = await Promise.all([
-          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_REPLAY_BATCH}`),
-          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_REPLAY_BATCH}`),
+          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=${orderParam}${afterParam}`),
+          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=${orderParam}${afterParam}`),
         ]);
         if (cancelled) return;
         const mData = mResp.ok ? await mResp.json() : { metrics: [] };
         const dData = dResp.ok ? await dResp.json() : { detections: [] };
-        replayMetricsAll.current = mData.metrics || [];
-        replayDetectionsAll.current = dData.detections || [];
-        setDbConnected(replayMetricsAll.current.length > 0);
-        fetchPeriphStatus();
+        const newMetrics: InfluxMetric[] = mData.metrics || [];
+        const newDetections: InfluxDetection[] = dData.detections || [];
 
-        if (replayMetricsAll.current.length === 0) {
-          setReplayPlaying(false);
-          return;
+        if (newMetrics.length > 0) {
+          replayMetricsAll.current = [...replayMetricsAll.current, ...newMetrics];
+          replayDetectionsAll.current = [...replayDetectionsAll.current, ...newDetections];
+        }
+        return newMetrics.length;
+      } catch {
+        return 0;
+      } finally {
+        isFetchingBatch.current = false;
+      }
+    };
+
+    (async () => {
+      // 첫 번째 배치 로드 (가장 오래된 데이터부터)
+      const count = await fetchBatch();
+      if (cancelled) return;
+      setDbConnected((count ?? 0) > 0);
+      fetchPeriphStatus();
+
+      if (replayMetricsAll.current.length === 0) {
+        setReplayPlaying(false);
+        return;
+      }
+
+      // 재생 루프: DATA_LIMIT개 윈도우를 5초마다 1칸씩 밀기
+      replayIdx.current = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
+
+      const step = () => {
+        if (cancelled) return;
+        const totalLen = replayMetricsAll.current.length;
+        let idx = replayIdx.current;
+
+        // 데이터 끝에 도달하면 처음부터 다시
+        if (idx >= totalLen) {
+          idx = Math.min(DATA_LIMIT, totalLen);
+          replayIdx.current = idx;
         }
 
-        // 재생 루프: DATA_LIMIT개 윈도우를 5초마다 1칸씩 밀기
-        // 최초 DATA_LIMIT번째부터 시작
-        replayIdx.current = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
+        const windowEnd = idx;
+        const windowStart = Math.max(0, windowEnd - DATA_LIMIT);
+        setDbMetrics(replayMetricsAll.current.slice(windowStart, windowEnd));
 
-        const step = () => {
-          if (cancelled) return;
-          let idx = replayIdx.current;
-          if (idx >= replayMetricsAll.current.length) {
-            idx = DATA_LIMIT; // 처음부터 다시 재생
-            replayIdx.current = DATA_LIMIT;
-          }
+        // Detection: 해당 시점 범위의 데이터 필터
+        const startTs = replayMetricsAll.current[windowStart].timestamp;
+        const endTs = replayMetricsAll.current[windowEnd - 1].timestamp;
+        setDbDetections(replayDetectionsAll.current.filter(d =>
+          d.timestamp >= startTs && d.timestamp <= endTs
+        ));
 
-          const windowEnd = idx;
-          const windowStart = Math.max(0, windowEnd - DATA_LIMIT);
-          setDbMetrics(replayMetricsAll.current.slice(windowStart, windowEnd));
+        // Health score 계산
+        const recentDets = replayDetectionsAll.current.filter(d =>
+          d.timestamp >= startTs && d.timestamp <= endTs
+        ).slice(-20);
+        let score = 100;
+        for (const d of recentDets) {
+          if (d.severity === 'critical') score -= Math.round(20 * d.confidence);
+          else if (d.severity === 'warning') score -= Math.round(10 * d.confidence);
+        }
+        setDbHealthScore(Math.max(0, Math.min(100, score)));
 
-          // Detection: 해당 시점 범위의 데이터 필터
-          const startTs = replayMetricsAll.current[windowStart].timestamp;
-          const endTs = replayMetricsAll.current[windowEnd - 1].timestamp;
-          setDbDetections(replayDetectionsAll.current.filter(d =>
-            d.timestamp >= startTs && d.timestamp <= endTs
-          ));
+        replayIdx.current = idx + 1;
 
-          // Health score 계산
-          const recentDets = replayDetectionsAll.current.filter(d =>
-            d.timestamp >= startTs && d.timestamp <= endTs
-          ).slice(-20);
-          let score = 100;
-          for (const d of recentDets) {
-            if (d.severity === 'critical') score -= Math.round(20 * d.confidence);
-            else if (d.severity === 'warning') score -= Math.round(10 * d.confidence);
-          }
-          setDbHealthScore(Math.max(0, Math.min(100, score)));
+        // 남은 데이터가 적으면 다음 배치 미리 로드
+        const remaining = totalLen - idx;
+        if (remaining <= DB_PREFETCH_THRESHOLD && !isFetchingBatch.current) {
+          const lastTs = replayMetricsAll.current[totalLen - 1].timestamp;
+          fetchBatch(lastTs);
+        }
 
-          replayIdx.current = idx + 1;
-          setTimeout(step, DB_REPLAY_INTERVAL);
-        };
+        setTimeout(step, DB_REPLAY_INTERVAL);
+      };
 
-        step();
-      } catch {
-        setDbConnected(false);
-        setReplayPlaying(false);
-      }
+      step();
     })();
 
     return () => { cancelled = true; };
