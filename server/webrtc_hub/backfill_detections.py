@@ -1,8 +1,6 @@
 """
 Backfill anomaly_detection from existing metrics in InfluxDB.
-
-Reads metrics, runs ECOD + ARIMA detector on each time slot,
-and writes detection results back to InfluxDB.
+Uses batch writes for speed.
 
 Usage:
   uv run python -m webrtc_hub.backfill_detections --bucket pos_metrics
@@ -12,11 +10,13 @@ Usage:
 import asyncio
 import logging
 import time as _time
+import urllib.request
 import click
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 from collections import defaultdict
+from influxdb_client import Point
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger("backfill_detections")
@@ -30,7 +30,6 @@ def query_all_metrics(client, bucket: str, agent_id: str, days: int = 7) -> List
     """Query all metrics and build data points for the detector."""
     from .influx_writer import PERIPHERAL_FIELDS
 
-    # Metrics
     query = f'''
     from(bucket: "{bucket}")
       |> range(start: -{days}d)
@@ -80,15 +79,13 @@ def query_all_metrics(client, bucket: str, agent_id: str, days: int = 7) -> List
 
     log.info(f"Loaded peripheral status for {len(periph_map)} time points")
 
-    # Merge: build detector-compatible data points
+    # Merge
     periph_times = sorted(periph_map.keys())
     last_periph: dict = {}
 
     data_points = []
     for m in metrics_list:
         ts = m["timestamp"]
-
-        # Find closest peripheral data
         for pt in periph_times:
             if pt <= ts:
                 last_periph = periph_map[pt]
@@ -111,23 +108,76 @@ def query_all_metrics(client, bucket: str, agent_id: str, days: int = 7) -> List
     return data_points
 
 
-async def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
-    from .influx_writer import (
-        init_influx, close_influx, write_detection,
-        INFLUX_URL, INFLUX_ORG, INFLUX_TOKEN,
+def _parse_timestamp(timestamp: str) -> datetime:
+    """Parse timestamp to naive UTC datetime."""
+    KST_OFFSET = timedelta(hours=9)
+    try:
+        ts_str = timestamp.rstrip('Z') if timestamp else ""
+        ts_dt = datetime.fromisoformat(ts_str)
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt - KST_OFFSET
+        else:
+            ts_dt = ts_dt.replace(tzinfo=None)
+        return ts_dt
+    except (ValueError, AttributeError):
+        return datetime.utcnow()
+
+
+def build_line(agent_id: str, ts_val: str, det) -> str:
+    """Build a single line protocol string for a detection."""
+    ts_dt = _parse_timestamp(ts_val)
+    point = Point("anomaly_detection") \
+        .tag("agent_id", agent_id) \
+        .tag("engine", det.engine) \
+        .tag("metric", det.metric) \
+        .tag("severity", det.severity)
+
+    if det.details:
+        point.tag("details", str(det.details)[:256])
+
+    point.field("score", float(det.score)) \
+        .field("threshold", float(det.threshold)) \
+        .field("confidence", float(det.confidence)) \
+        .field("actual_value", float(det.value))
+
+    if det.forecast is not None:
+        point.field("arima_predicted", float(det.forecast))
+    if det.residual is not None:
+        point.field("arima_deviation", float(det.residual))
+
+    point.time(ts_dt)
+    return point.to_line_protocol()
+
+
+def batch_write(url: str, token: str, org: str, bucket: str, lines: List[str]):
+    """Write batch of line protocol strings."""
+    body = "\n".join(lines).encode("utf-8")
+    write_url = f"{url}/api/v2/write?org={org}&bucket={bucket}"
+    req = urllib.request.Request(
+        write_url, data=body,
+        headers={
+            "Authorization": f"Token {token}",
+            "Content-Type": "text/plain; charset=utf-8",
+        },
+        method="POST",
     )
-    from .detector import EnhancedAnomalyDetector, MIN_SAMPLES_ECOD
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.status in [200, 204]
+
+
+def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
+    from .influx_writer import INFLUX_URL, INFLUX_ORG, INFLUX_TOKEN, init_influx, close_influx
+    from .detector import EnhancedAnomalyDetector
     from influxdb_client import InfluxDBClient
-    import webrtc_hub.influx_writer as iw
 
     init_influx()
     client_obj = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 
-    # Load data
     data_points = query_all_metrics(client_obj, bucket, agent_id, days)
+    client_obj.close()
+
     if not data_points:
         log.error("No metrics data found!")
-        client_obj.close()
         close_influx()
         return
 
@@ -135,14 +185,17 @@ async def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
     warmup = min(30, max(5, total // 3))
     log.info(f"Running detector on {total} data points (warmup={warmup})...")
 
-    # Run detector
     detector = EnhancedAnomalyDetector()
     buckets = [bucket]
     if also_bucket:
         buckets.append(also_bucket)
 
+    BATCH_SIZE = 5000
     total_detections = 0
     t0 = _time.time()
+
+    # Collect all lines per bucket
+    bucket_lines: Dict[str, List[str]] = {b: [] for b in buckets}
 
     for i, dp in enumerate(data_points):
         run_ecod = (i >= warmup)
@@ -160,29 +213,34 @@ async def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
 
         ts_val = dp["Timestamp"]
         for det in result.detections:
+            line = build_line(agent_id, ts_val, det)
             for b in buckets:
+                bucket_lines[b].append(line)
+            total_detections += 1
+
+        # Flush batch periodically
+        for b in buckets:
+            if len(bucket_lines[b]) >= BATCH_SIZE:
                 try:
-                    await write_detection(
-                        agent_id=agent_id, timestamp=ts_val,
-                        engine=det.engine, metric=det.metric,
-                        value=det.value, score=det.score,
-                        threshold=det.threshold, severity=det.severity,
-                        confidence=det.confidence,
-                        forecast=det.forecast, residual=det.residual,
-                        details=det.details, bucket=b,
-                    )
-                    total_detections += 1
-                except Exception:
-                    pass
+                    batch_write(INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, b, bucket_lines[b])
+                except Exception as e:
+                    log.warning(f"Batch write error ({b}): {e}")
+                bucket_lines[b] = []
 
         if (i + 1) % max(1, total // 20) == 0:
             elapsed = _time.time() - t0
             rate = (i + 1) / elapsed if elapsed > 0 else 0
             log.info(f"  {i+1}/{total} ({(i+1)*100//total}%) — {rate:.1f} slots/s — detections: {total_detections}")
 
-    client_obj.close()
-    close_influx()
+    # Flush remaining
+    for b in buckets:
+        if bucket_lines[b]:
+            try:
+                batch_write(INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, b, bucket_lines[b])
+            except Exception as e:
+                log.warning(f"Final batch write error ({b}): {e}")
 
+    close_influx()
     elapsed = _time.time() - t0
     log.info(f"Done! {total_detections} detections written in {elapsed:.0f}s")
 
@@ -195,7 +253,7 @@ async def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
 def main(bucket, also_bucket, agent_id, days):
     """Backfill anomaly detections from existing metrics data."""
     log.info(f"Backfilling detections: bucket={bucket}, agent={agent_id}, days={days}")
-    asyncio.run(run_backfill(bucket, also_bucket, agent_id, days))
+    run_backfill(bucket, also_bucket, agent_id, days)
 
 
 if __name__ == "__main__":
