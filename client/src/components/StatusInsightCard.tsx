@@ -146,6 +146,9 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
           <Crosshair size={14} /> 시스템 상태 분석
         </h3>
       </div>
+      <div style={{ fontSize: '11px', color: '#475569', lineHeight: '1.5' }}>
+        최근 수집된 데이터 기반 분석. 짧은 구간에서는 일시적 변동으로 수치가 튈 수 있으며, 지속적인 추세를 함께 확인하세요.
+      </div>
 
       {/* ECOD Current Status */}
       {ecodInsights && (

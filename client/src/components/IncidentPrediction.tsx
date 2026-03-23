@@ -327,7 +327,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
           <div style={{ fontSize: 22, fontWeight: 700, color: sev.color }}>
             {(worst.final_score * 100).toFixed(0)}%
           </div>
-          <div style={{ fontSize: 10, color: '#cbd5e1' }}>최대 위험도</div>
+          <div style={{ fontSize: 10, color: '#cbd5e1' }}>최대 위험도 ({horizonLabel(worst.horizon_min)})</div>
         </div>
       </div>
       {isRisky && (

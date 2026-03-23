@@ -36,6 +36,9 @@ const METRIC_KO: Record<string, string> = {
   CPU: 'CPU', Memory: '메모리', DiskIO: '디스크IO',
   NetworkSent: '네트워크 송신', NetworkRecv: '네트워크 수신',
   Process: '프로세스', POS_Idle: 'POS 유휴', Multivariate: '종합',
+  // peripheral-status API 소문자 필드명
+  dongle: '동글', hand_scanner: '핸드스캐너', '2d_scanner': '2D스캐너',
+  passport_reader: '여권리더기', phone_charger: '충전기', keyboard: '키보드', msr: 'MSR',
 };
 
 const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
@@ -50,7 +53,7 @@ const MODE_CONFIG = {
 
 export function Dashboard() {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
-  const [viewMode, setViewMode] = useState<ViewMode>('realtime');
+  const [viewMode, setViewMode] = useState<ViewMode>('db');
   const [arimaMetric, setArimaMetric] = useState<string>('CPU');
   const [ecodGroup, setEcodGroup] = useState<'all' | 'system' | 'peripheral' | 'status'>('all');
   const [historyEngine, setHistoryEngine] = useState<'all' | 'ecod' | 'arima' | 'peripheral'>('all');
@@ -501,7 +504,7 @@ export function Dashboard() {
             ? `동일 ${DATA_LIMIT}개 시점 기준 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${METRIC_KO[d.metric] || d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `동일 ${DATA_LIMIT}개 시점 기준 — 경고 없음`} />
         <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '최신 상태 기준 — 7개 장치 모두 연결'} />
+          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외` : '최신 상태 기준 — 7개 장치 모두 연결\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -525,7 +528,8 @@ export function Dashboard() {
             <div style={{ paddingLeft: '12px', color: '#475569' }}>Score = (학습 데이터 중 현재 값보다 낮은 비율). 예) Score 0.95 = 상위 5%</div>
             <div>3. 14개 지표를 동시 분석하여 <b style={{ color: '#94a3b8' }}>복합 이상 판별</b></div>
             <div style={{ paddingLeft: '12px', color: '#475569' }}>CPU·메모리·디스크IO·네트워크(송수신)·프로세스·주변장치(7종)·POS유휴</div>
-            <div>4. Score ≥ 0.95 또는 절대 임계값 초과 시 <b style={{ color: '#f59e0b' }}>warning</b>, CPU ≥ 90% 등 위험 수준 시 <b style={{ color: '#ef4444' }}>critical</b></div>
+            <div>4. ECOD 종합 Score ≥ 0.95 또는 개별 메트릭 임계값 초과 시 <b style={{ color: '#f59e0b' }}>warning</b> (CPU ≥ 80%, 메모리 ≥ 85%)</div>
+            <div style={{ paddingLeft: '12px' }}>개별 메트릭이 위험 수준 초과 시 <b style={{ color: '#ef4444' }}>critical</b> (CPU ≥ 90%, 메모리 ≥ 95%)</div>
           </div>
         </div>
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
