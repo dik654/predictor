@@ -28,7 +28,7 @@ from .detector import (
     ECOD_WEIGHT, ARIMA_WEIGHT,
 )
 from . import influx_writer
-from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation, write_peripheral_status, DEVICE_NAME_MAP
+from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation, write_peripheral_status, DEVICE_NAME_MAP, get_last_metric_time
 from .predict_tracker import PredictTracker
 from .forecast_evaluator import ForecastEvaluator
 
@@ -630,9 +630,19 @@ async def main(
 @click.option("--seed", default=42, type=int)
 @click.option("--workers", default=5, type=int, help="ARIMA parallel workers (default: 5)")
 @click.option("--also-bucket", default="", help="Also write to this bucket (e.g. sample_metrics)")
+@click.option("--resume", is_flag=True, default=False, help="Resume from last written timestamp in InfluxDB")
 def cli(file_path, interval_min, hours, agent_id, bucket, start_after,
-        store_code, store_name, pos_no, region_code, region_name, seed, workers, also_bucket):
+        store_code, store_name, pos_no, region_code, region_name, seed, workers, also_bucket, resume):
     """Parallel historical generator: ARIMA runs in thread pool for speed."""
+    if resume:
+        init_influx()
+        last_ts = get_last_metric_time(agent_id, bucket)
+        close_influx()
+        if last_ts:
+            log.info(f"Resume: last metric at {last_ts}, generating from there to now")
+            start_after = last_ts
+        else:
+            log.warning("Resume: no existing data found, falling back to --hours")
     asyncio.run(main(
         file_path=file_path, interval_min=interval_min, hours=hours,
         agent_id=agent_id, bucket=bucket, start_after=start_after,

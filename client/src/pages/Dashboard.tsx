@@ -133,7 +133,7 @@ export function Dashboard() {
   const PERIPHERAL_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR']);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
   const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
-  // 주변장치 이상: 최근 탐지에서 warning/critical인 고유 장치명
+  // 주변장치 이상: 최근 탐지에서 실제 꺼짐(actual_value=0)인 장치
   const peripheralWarnDevices = (() => {
     const allPeriphDetections = dbDetections.filter(d =>
       d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric))
@@ -144,7 +144,7 @@ export function Dashboard() {
       const prev = latestByDevice.get(d.metric);
       if (!prev || d.timestamp > prev.timestamp) latestByDevice.set(d.metric, d);
     }
-    return [...latestByDevice.values()].filter(d => d.severity === 'warning' || d.severity === 'critical');
+    return [...latestByDevice.values()].filter(d => d.actual_value === 0);
   })();
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
@@ -190,6 +190,25 @@ export function Dashboard() {
   const fmtTime = (ts: string) => {
     try { return new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); }
     catch { return ts; }
+  };
+
+  // 상세 텍스트를 한국어로 변환
+  const fmtDetails = (d: InfluxDetection) => {
+    if (!d.details) return d.arima_predicted ? `예측: ${d.arima_predicted.toFixed(1)}` : '-';
+    const ko = METRIC_KO[d.metric] || d.metric;
+    if (d.engine === 'arima') return d.details; // ARIMA는 이미 한국어
+    // "Memory 81.0% (상위 27%)" → "81.0% — 학습 데이터 상위 27% 수준"
+    // "NetworkSent 627bytes — 상위 100% (p95=888.6)" → "627bytes — 상위 100%"
+    const m = d.details.match(/[\d.]+[%a-z]*/i);
+    const val = m ? m[0] : '';
+    const top = d.details.match(/상위 (\d+)%/);
+    const topPct = top ? top[1] : null;
+    if (topPct) {
+      const pctNum = parseInt(topPct);
+      const level = pctNum <= 5 ? '매우 높음' : pctNum <= 20 ? '높음' : pctNum <= 80 ? '보통' : '낮음';
+      return `${val} — 상위 ${topPct}% (${level})`;
+    }
+    return d.details.replace(d.metric, ko);
   };
 
   const chartTooltip = {
@@ -367,7 +386,7 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`InfluxDB에 저장된 최근 ${metricsCount}개 시점 (CPU·메모리·디스크IO·네트워크)`} />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`InfluxDB에 저장된 최근 ${metricsCount}개 시점\n(CPU·메모리·디스크IO·네트워크)\n주변장치는 POS 유휴 상태에서만 수집`} />
         <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => scrollToHistory('ecod')}
           desc={ecodWarnings.length > 0
             ? `최근 ${ecodData.length}건 중 ${ecodWarnings.length}건 경고 — ${ecodSummary}`
@@ -376,8 +395,8 @@ export function Dashboard() {
           desc={arimaWarnings.length > 0
             ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `최근 ${arimaData.length}건 — 경고 없음`} />
-        <StatCard title="주변장치 이상" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralWarnDevices.length > 0 ? `이상 장치: ${peripheralWarnDevices.map(d => d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '7개 장치 모두 정상'} />
+        <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
+          desc={peripheralWarnDevices.length > 0 ? `꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d.metric] || d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개 꺼짐)` : '7개 장치 모두 연결'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -448,11 +467,15 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-        <div style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.6', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #1e293b' }}>
-          <b style={{ color: '#94a3b8' }}>Score</b> — ECOD: 학습 데이터 내 백분위 (0=정상중앙, 1=극단) · ARIMA: 잔차÷임계값 (1 초과=이상) · 주변장치: 꺼짐=1, 연결=0{' · '}
-          <b style={{ color: '#94a3b8' }}>신뢰도</b> — 학습 데이터 양 기반 (20건 미만 40%, 20~60건 70%, 60건+ 90%){' · '}
-          <b style={{ color: '#94a3b8' }}>심각도</b> — 시스템: Score 기준 (normal/warning/critical) · 주변장치: 꺼짐 상태 표시 (연결=정상, 꺼짐=이상, 미사용=해당없음)
+        {historyEngine !== 'peripheral' && (
+        <div style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.8', marginBottom: '10px', padding: '10px 12px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #1e293b' }}>
+          <div><b style={{ color: '#94a3b8' }}>Score</b> — 과거 학습 데이터에서 현재 값이 얼마나 극단적인지 (0.0=평범, 1.0=매우 이례적)</div>
+          <div style={{ paddingLeft: '12px', color: '#525e6f' }}>예) 메모리 Score 0.47 → 학습 기간 중 47%보다 높은 수준 (평범)</div>
+          <div><b style={{ color: '#94a3b8' }}>신뢰도</b> — 판단 근거가 되는 학습 데이터의 양 (많을수록 신뢰↑)</div>
+          <div style={{ paddingLeft: '12px', color: '#525e6f' }}>20건 미만: 40% · 20~60건: 70% · 60건 이상: 90%</div>
+          <div><b style={{ color: '#94a3b8' }}>심각도</b> — normal: 정상 범위 · warning: 주의 (CPU≥80%, 메모리≥85%, 또는 Score≥0.95) · critical: 위험 (CPU≥90%, 메모리≥95%)</div>
         </div>
+        )}
         {allDetections.length === 0 ? (
           <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '40px' }}>
             InfluxDB에서 데이터 조회 중... ({viewMode === 'realtime' ? '2초' : '5초'} 주기 폴링)
@@ -504,7 +527,7 @@ export function Dashboard() {
                         <td style={{ padding: '8px 10px', textAlign: 'right' }}>{isPeriph ? '-' : (d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-')}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'center' }}>{isPeriph ? <PeripheralStatusTag value={d.actual_value} /> : <SeverityTag severity={d.severity} />}</td>
                         <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
-                          {isPeriph ? periphDesc : (d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-'))}
+                          {isPeriph ? periphDesc : fmtDetails(d)}
                         </td>
                       </>
                     )}
@@ -528,7 +551,7 @@ function StatCard({ title, value, color = '#3b82f6', icon, desc, onClick }: { ti
         {title}
       </div>
       <div style={{ fontSize: '22px', fontWeight: 600, color: '#e2e8f0' }}>{value}</div>
-      {desc && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px', lineHeight: '1.4' }}>{desc}</div>}
+      {desc && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px', lineHeight: '1.4', whiteSpace: 'pre-line' }}>{desc}</div>}
     </div>
   );
 }
