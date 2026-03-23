@@ -146,7 +146,19 @@ export function Dashboard() {
     : dbDetections.filter(d => d.engine === historyEngine);
   const allDetections = filteredDetections.slice(-50).reverse();
   const ecodWarnings = ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical');
-  const arimaWarnings = arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical');
+  // ARIMA 경고: 메트릭별 최신 임계값 기준으로 클라이언트에서 재판정
+  const arimaWarnings = (() => {
+    // 메트릭별 최신 threshold 수집
+    const latestThreshold = new Map<string, number>();
+    for (const d of arimaData) {
+      if (d.threshold > 0) latestThreshold.set(d.metric, d.threshold);
+    }
+    return arimaData.filter(d => {
+      const th = latestThreshold.get(d.metric) || d.threshold || 0;
+      const residual = Math.abs(d.arima_deviation || 0);
+      return th > 0 && residual > th;
+    });
+  })();
 
   // ECOD 경고 요약: 이진(주변장치) vs 연속(시스템) 분리
   const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
@@ -246,7 +258,8 @@ export function Dashboard() {
   const sharedMax = Math.ceil(Math.max(30, ...mainValues) * 1.1);
   // 하단 잔차 차트: 잔차 + 임계값 기준 스케일
   const arimaThresholds = selectedArimaData.map(d => d.threshold || 0);
-  const residualMax = Math.ceil(Math.max(1, ...bandWidth, ...arimaThresholds.map(t => t * 1.8)) * 1.1);
+  const fixedThreshold = arimaThresholds.length > 0 ? arimaThresholds[arimaThresholds.length - 1] : 0;
+  const residualMax = Math.ceil(Math.max(1, ...bandWidth, fixedThreshold * 1.8) * 1.1);
 
   const arimaChartOption = {
     title: { text: `AutoARIMA 예측 vs 실제 (${arimaMetric})`, left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
@@ -275,7 +288,7 @@ export function Dashboard() {
           const pred0 = selectedArimaData[idx]?.arima_predicted ?? 0, pred1 = selectedArimaData[idx + 1]?.arima_predicted ?? 0;
           const p0 = api.coord([idx, act0]), p1 = api.coord([idx, pred0]);
           const p2 = api.coord([idx + 1, pred1]), p3 = api.coord([idx + 1, act1]);
-          return { type: 'polygon', shape: { points: [p0, p1, p2, p3] }, style: { fill: 'rgba(239, 68, 68, 0.12)' } };
+          return { type: 'polygon', shape: { points: [p0, p1, p2, p3] }, style: { fill: 'rgba(148, 163, 184, 0.08)' } };
         },
         data: arimaActual.map((_: any, i: number) => [i]),
         tooltip: { show: false },
@@ -290,9 +303,8 @@ export function Dashboard() {
         color: 'rgba(59, 130, 246, 0.5)',
         itemStyle: { color: (params: any) => {
           const v = params.value || 0;
-          const th = selectedArimaData[params.dataIndex]?.threshold || 1;
-          if (v > th * 1.5) return 'rgba(239, 68, 68, 0.8)';
-          if (v > th) return 'rgba(251, 191, 36, 0.7)';
+          if (v > fixedThreshold * 1.5) return 'rgba(239, 68, 68, 0.8)';
+          if (v > fixedThreshold) return 'rgba(251, 191, 36, 0.7)';
           return 'rgba(59, 130, 246, 0.5)';
         }, borderRadius: [2, 2, 0, 0] },
       },
