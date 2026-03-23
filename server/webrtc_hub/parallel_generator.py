@@ -595,8 +595,10 @@ async def main(
             )
 
         if result and i >= warmup:
-            asyncio.create_task(tracker.compare_actual_async(
-                agent_id=aid, timestamp=ts_val, raw_metrics=result.raw_metrics))
+            # compare_actual_async writes to INFLUX_BUCKET — run once, then copy to other buckets
+            influx_writer.INFLUX_BUCKET = bucket
+            await tracker.compare_actual_async(
+                agent_id=aid, timestamp=ts_val, raw_metrics=result.raw_metrics)
 
         if (i + 1) % max(1, total // 20) == 0:
             elapsed = _time.time() - t0

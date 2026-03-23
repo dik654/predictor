@@ -413,6 +413,7 @@ async def update_forecast_actual(
     error_pct: float,
     bucket: str = INFLUX_BUCKET,
     store_info: Dict = None,
+    timestamp: str = "",
 ) -> bool:
     """
     Update forecast with actual value and error percentage.
@@ -447,6 +448,10 @@ async def update_forecast_actual(
             .field("forecast_value", float(forecast_value)) \
             .field("error_percent", float(error_pct)) \
             .field("within_3sigma", 1 if error_pct <= 3.0 else 0)
+
+        if timestamp:
+            ts_dt = _parse_timestamp(timestamp)
+            point.time(ts_dt)
 
         def _write_accuracy():
             global client, write_api, _last_reconnect

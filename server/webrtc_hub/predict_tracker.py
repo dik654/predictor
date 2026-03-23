@@ -97,7 +97,7 @@ class PredictTracker:
         try:
             current_dt = self._parse_timestamp(timestamp)
 
-            for metric in ["CPU", "Memory"]:
+            for metric in ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv"]:
                 if metric not in raw_metrics:
                     continue
 
@@ -139,6 +139,7 @@ class PredictTracker:
                                 forecast_value=forecast.predicted_value,
                                 error_pct=error_pct,
                                 bucket=influx_writer.INFLUX_BUCKET,
+                                timestamp=timestamp,
                             )
                         )
 
@@ -174,7 +175,7 @@ class PredictTracker:
         try:
             current_dt = self._parse_timestamp(timestamp)
 
-            for metric in ["CPU", "Memory"]:
+            for metric in ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv"]:
                 if metric not in raw_metrics:
                     continue
 
@@ -183,7 +184,6 @@ class PredictTracker:
 
                 # Find forecasts that should match this actual value
                 if key not in self.forecasts:
-                    log.debug(f"❌ No forecasts for {key}")
                     continue
 
                 forecasts_to_check = list(self.forecasts[key])
@@ -220,6 +220,7 @@ class PredictTracker:
                             forecast_value=forecast.predicted_value,
                             error_pct=error_pct,
                             bucket=influx_writer.INFLUX_BUCKET,
+                            timestamp=timestamp,
                         )
 
                         log.info(
