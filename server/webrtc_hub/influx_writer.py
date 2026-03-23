@@ -565,14 +565,12 @@ def get_latest_accuracy(
     try:
         query = f"""
         from(bucket: "{target_bucket}")
-          |> range(start: -72h)
+          |> range(start: -7d)
           |> filter(fn: (r) => r._measurement == "accuracy")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> filter(fn: (r) => r.metric == "{metric}")
           |> filter(fn: (r) => r.horizon_min == "{horizon_min}")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: {limit})
-          |> sort(columns: ["_time"], desc: false)
+          |> tail(n: {limit})
         """
 
         query_api = client.query_api()
@@ -866,7 +864,7 @@ def get_latest_forecast_evaluation(
         # Use last() to get only the most recent value per field per horizon
         query = f'''
         from(bucket: "{target_bucket}")
-          |> range(start: -24h)
+          |> range(start: -7d)
           |> filter(fn: (r) => r._measurement == "arima_ecod_ensemble_forecast_eval")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> last()
@@ -1233,14 +1231,12 @@ def get_recent_metrics(
     try:
         query = f'''
         from(bucket: "{target_bucket}")
-          |> range(start: -30m)
+          |> range(start: -7d)
           |> filter(fn: (r) => r._measurement == "metrics")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
               or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: {limit})
-          |> sort(columns: ["_time"], desc: false)
+          |> tail(n: {limit})
         '''
 
         query_api = client.query_api()
@@ -1292,12 +1288,10 @@ def get_recent_detections(
     try:
         query = f'''
         from(bucket: "{target_bucket}")
-          |> range(start: -30m)
+          |> range(start: -7d)
           |> filter(fn: (r) => r._measurement == "anomaly_detection")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: {limit})
-          |> sort(columns: ["_time"], desc: false)
+          |> tail(n: {limit})
         '''
 
         query_api = client.query_api()
