@@ -71,10 +71,10 @@ class HistoricalDetector(EnhancedAnomalyDetector):
 
         # For historical data, use more lenient minimums
         # Adjust based on total dataset size
-        if total_slots < 10:
+        if config.total_slots < 10:
             self.min_samples_arima = 3
             self.min_samples_ecod = 2
-        elif total_slots < 30:
+        elif config.total_slots < 30:
             self.min_samples_arima = 5
             self.min_samples_ecod = 3
         else:
