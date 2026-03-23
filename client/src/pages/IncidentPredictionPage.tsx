@@ -9,7 +9,7 @@ type BucketMode = 'pos_metrics' | 'sample_metrics';
 
 export function IncidentPredictionPage() {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
-  const [bucket, setBucket] = useState<BucketMode>('pos_metrics');
+  const [bucket, setBucket] = useState<BucketMode>('sample_metrics');
   const [evaluation, setEvaluation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -101,7 +101,7 @@ export function IncidentPredictionPage() {
                 color: bucket === 'sample_metrics' ? '#e2e8f0' : '#cbd5e1',
               }}
             >
-              Sample
+              DB
             </button>
           </div>
 
