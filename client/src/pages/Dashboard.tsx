@@ -142,24 +142,28 @@ export function Dashboard() {
 
     let cancelled = false;
 
-    // 다음 배치를 가져오는 함수 (커서 기반)
-    const fetchBatch = async (afterTs?: string) => {
-      if (isFetchingBatch.current) return;
+    // 배치를 가져오는 함수 (커서 기반, reset=true면 버퍼 초기화)
+    const fetchBatch = async (afterTs?: string, reset?: boolean) => {
+      if (isFetchingBatch.current) return 0;
       isFetchingBatch.current = true;
       try {
-        const orderParam = afterTs ? 'oldest' : 'oldest';
         const afterParam = afterTs ? `&after=${encodeURIComponent(afterTs)}` : '';
         const [mResp, dResp] = await Promise.all([
-          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=${orderParam}${afterParam}`),
-          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=${orderParam}${afterParam}`),
+          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest${afterParam}`),
+          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest${afterParam}`),
         ]);
-        if (cancelled) return;
+        if (cancelled) return 0;
         const mData = mResp.ok ? await mResp.json() : { metrics: [] };
         const dData = dResp.ok ? await dResp.json() : { detections: [] };
         const newMetrics: InfluxMetric[] = mData.metrics || [];
         const newDetections: InfluxDetection[] = dData.detections || [];
 
-        if (newMetrics.length > 0) {
+        if (reset) {
+          // 루프 시 버퍼 리셋: 과거 데이터를 새로 fetch한 것으로 교체
+          replayMetricsAll.current = newMetrics;
+          replayDetectionsAll.current = newDetections;
+          replayIdx.current = Math.min(DATA_LIMIT, newMetrics.length);
+        } else if (newMetrics.length > 0) {
           replayMetricsAll.current = [...replayMetricsAll.current, ...newMetrics];
           replayDetectionsAll.current = [...replayDetectionsAll.current, ...newDetections];
         }
@@ -175,7 +179,7 @@ export function Dashboard() {
       // 첫 번째 배치 로드 (가장 오래된 데이터부터)
       const count = await fetchBatch();
       if (cancelled) return;
-      setDbConnected((count ?? 0) > 0);
+      setDbConnected(count > 0);
       fetchPeriphStatus();
 
       if (replayMetricsAll.current.length === 0) {
@@ -186,15 +190,20 @@ export function Dashboard() {
       // 재생 루프: DATA_LIMIT개 윈도우를 5초마다 1칸씩 밀기
       replayIdx.current = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
 
-      const step = () => {
+      const step = async () => {
         if (cancelled) return;
         const totalLen = replayMetricsAll.current.length;
         let idx = replayIdx.current;
 
-        // 데이터 끝에 도달하면 처음부터 다시
+        // 데이터 끝에 도달 → 버퍼 리셋하고 과거부터 다시 fetch
         if (idx >= totalLen) {
-          idx = Math.min(DATA_LIMIT, totalLen);
-          replayIdx.current = idx;
+          await fetchBatch(undefined, true);
+          if (cancelled) return;
+          idx = replayIdx.current;
+          if (replayMetricsAll.current.length === 0) {
+            setTimeout(step, DB_REPLAY_INTERVAL);
+            return;
+          }
         }
 
         const windowEnd = idx;
@@ -221,7 +230,7 @@ export function Dashboard() {
 
         replayIdx.current = idx + 1;
 
-        // 남은 데이터가 적으면 다음 배치 미리 로드
+        // 남은 데이터가 적으면 다음 배치 미리 로드 (이어붙이기)
         const remaining = totalLen - idx;
         if (remaining <= DB_PREFETCH_THRESHOLD && !isFetchingBatch.current) {
           const lastTs = replayMetricsAll.current[totalLen - 1].timestamp;
