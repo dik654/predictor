@@ -463,40 +463,48 @@ export function Dashboard() {
               <thead>
                 <tr style={{ borderBottom: '1px solid #334155' }}>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
-                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
-                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
+                  {historyEngine === 'peripheral' ? (
+                    <>
+                      <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>장치</th>
+                      <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>상태</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
+                    </>
+                  ) : (
+                    <>
+                      <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
+                      <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {allDetections.map((d) => {
                   const isPeriph = PERIPHERAL_METRICS.has(d.metric) && d.engine === 'ecod';
+                  const periphDesc = d.actual_value === 1 ? '정상 연결' : d.actual_value === 0 ? '연결 끊김 — 확인 필요' : '미사용 장치';
                   return (
                   <tr key={`${d.timestamp}-${d.engine}-${d.metric}`} style={{ borderBottom: '1px solid #1e293b', animation: 'fadeSlideIn 0.3s ease' }}>
                     <td style={{ padding: '8px 10px' }}>
                       {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : '-'}
                     </td>
-                    <td style={{ padding: '8px 10px' }}>{isPeriph ? <EngineTag engine="peripheral" /> : <EngineTag engine={d.engine} />}</td>
-                    <td style={{ padding: '8px 10px' }}>{METRIC_KO[d.metric] || d.metric}</td>
-                    {isPeriph ? (
+                    {historyEngine === 'peripheral' ? (
                       <>
-                        <td colSpan={2} style={{ padding: '8px 10px', textAlign: 'center' }}><PeripheralStatusTag value={d.actual_value} /></td>
-                        <td colSpan={2} style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
-                          {d.actual_value === 1 ? '정상 연결' : d.actual_value === 0 ? '연결 끊김' : '장치 미사용'}
-                        </td>
+                        <td style={{ padding: '8px 10px' }}>{METRIC_KO[d.metric] || d.metric}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'center' }}><PeripheralStatusTag value={d.actual_value} /></td>
+                        <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>{periphDesc}</td>
                       </>
                     ) : (
                       <>
-                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{d.score?.toFixed(3)}</td>
-                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                          {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
-                        </td>
-                        <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
+                        <td style={{ padding: '8px 10px' }}>{isPeriph ? <EngineTag engine="peripheral" /> : <EngineTag engine={d.engine} />}</td>
+                        <td style={{ padding: '8px 10px' }}>{METRIC_KO[d.metric] || d.metric}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{isPeriph ? '-' : d.score?.toFixed(3)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{isPeriph ? '-' : (d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-')}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'center' }}>{isPeriph ? <PeripheralStatusTag value={d.actual_value} /> : <SeverityTag severity={d.severity} />}</td>
                         <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
-                          {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
+                          {isPeriph ? periphDesc : (d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-'))}
                         </td>
                       </>
                     )}
