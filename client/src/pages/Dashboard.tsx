@@ -126,6 +126,9 @@ export function Dashboard() {
 
   // DB 재생: 배치 단위로 데이터를 가져오면서 슬라이딩 윈도우 재생
   const isFetchingBatch = useRef(false);
+  // 다음 루프용 과거 데이터를 미리 담아두는 버퍼
+  const nextLoopMetrics = useRef<InfluxMetric[] | null>(null);
+  const nextLoopDetections = useRef<InfluxDetection[] | null>(null);
 
   useEffect(() => {
     if (viewMode !== 'db') return;
@@ -136,48 +139,72 @@ export function Dashboard() {
     replayMetricsAll.current = [];
     replayDetectionsAll.current = [];
     isFetchingBatch.current = false;
+    nextLoopMetrics.current = null;
+    nextLoopDetections.current = null;
     setDbMetrics([]);
     setDbDetections([]);
     setReplayPlaying(true);
 
     let cancelled = false;
 
-    // 배치를 가져오는 함수 (커서 기반, reset=true면 버퍼 초기화)
-    const fetchBatch = async (afterTs?: string, reset?: boolean) => {
-      if (isFetchingBatch.current) return 0;
+    // 배치를 가져와서 현재 버퍼에 이어붙이기 (커서 기반)
+    const fetchNextBatch = async (afterTs: string) => {
+      if (isFetchingBatch.current) return;
       isFetchingBatch.current = true;
       try {
-        const afterParam = afterTs ? `&after=${encodeURIComponent(afterTs)}` : '';
+        const afterParam = `&after=${encodeURIComponent(afterTs)}`;
         const [mResp, dResp] = await Promise.all([
           fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest${afterParam}`),
           fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest${afterParam}`),
         ]);
-        if (cancelled) return 0;
+        if (cancelled) return;
         const mData = mResp.ok ? await mResp.json() : { metrics: [] };
         const dData = dResp.ok ? await dResp.json() : { detections: [] };
         const newMetrics: InfluxMetric[] = mData.metrics || [];
         const newDetections: InfluxDetection[] = dData.detections || [];
-
-        if (reset) {
-          // 루프 시 버퍼 리셋: 과거 데이터를 새로 fetch한 것으로 교체
-          replayMetricsAll.current = newMetrics;
-          replayDetectionsAll.current = newDetections;
-          replayIdx.current = Math.min(DATA_LIMIT, newMetrics.length);
-        } else if (newMetrics.length > 0) {
+        if (newMetrics.length > 0) {
           replayMetricsAll.current = [...replayMetricsAll.current, ...newMetrics];
           replayDetectionsAll.current = [...replayDetectionsAll.current, ...newDetections];
         }
-        return newMetrics.length;
-      } catch {
-        return 0;
-      } finally {
+      } catch { /* ignore */ } finally {
         isFetchingBatch.current = false;
       }
     };
 
+    // 다음 루프를 위해 과거 데이터를 미리 fetch해두기
+    const prefetchLoopStart = async () => {
+      if (nextLoopMetrics.current !== null) return; // 이미 준비됨
+      try {
+        const [mResp, dResp] = await Promise.all([
+          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
+          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
+        ]);
+        if (cancelled) return;
+        const mData = mResp.ok ? await mResp.json() : { metrics: [] };
+        const dData = dResp.ok ? await dResp.json() : { detections: [] };
+        nextLoopMetrics.current = mData.metrics || [];
+        nextLoopDetections.current = dData.detections || [];
+      } catch { /* ignore */ }
+    };
+
+    // 초기 배치 fetch (가장 오래된 데이터)
+    const fetchInitial = async () => {
+      try {
+        const [mResp, dResp] = await Promise.all([
+          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
+          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_FETCH_BATCH}&order=oldest`),
+        ]);
+        if (cancelled) return 0;
+        const mData = mResp.ok ? await mResp.json() : { metrics: [] };
+        const dData = dResp.ok ? await dResp.json() : { detections: [] };
+        replayMetricsAll.current = mData.metrics || [];
+        replayDetectionsAll.current = dData.detections || [];
+        return replayMetricsAll.current.length;
+      } catch { return 0; }
+    };
+
     (async () => {
-      // 첫 번째 배치 로드 (가장 오래된 데이터부터)
-      const count = await fetchBatch();
+      const count = await fetchInitial();
       if (cancelled) return;
       setDbConnected(count > 0);
       fetchPeriphStatus();
@@ -187,22 +214,26 @@ export function Dashboard() {
         return;
       }
 
-      // 재생 루프: DATA_LIMIT개 윈도우를 5초마다 1칸씩 밀기
       replayIdx.current = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
 
-      const step = async () => {
+      const step = () => {
         if (cancelled) return;
         const totalLen = replayMetricsAll.current.length;
         let idx = replayIdx.current;
 
-        // 데이터 끝에 도달 → 버퍼 리셋하고 과거부터 다시 fetch
+        // 데이터 끝 도달 → 미리 받아둔 과거 데이터로 즉시 교체 (끊김 없음)
         if (idx >= totalLen) {
-          await fetchBatch(undefined, true);
-          if (cancelled) return;
-          idx = replayIdx.current;
-          if (replayMetricsAll.current.length === 0) {
-            setTimeout(step, DB_REPLAY_INTERVAL);
-            return;
+          if (nextLoopMetrics.current && nextLoopMetrics.current.length > 0) {
+            replayMetricsAll.current = nextLoopMetrics.current;
+            replayDetectionsAll.current = nextLoopDetections.current || [];
+            nextLoopMetrics.current = null;
+            nextLoopDetections.current = null;
+            idx = Math.min(DATA_LIMIT, replayMetricsAll.current.length);
+            replayIdx.current = idx;
+          } else {
+            // prefetch가 아직 안됐으면 처음부터 재사용 (fallback)
+            idx = Math.min(DATA_LIMIT, totalLen);
+            replayIdx.current = idx;
           }
         }
 
@@ -230,11 +261,15 @@ export function Dashboard() {
 
         replayIdx.current = idx + 1;
 
-        // 남은 데이터가 적으면 다음 배치 미리 로드 (이어붙이기)
         const remaining = totalLen - idx;
-        if (remaining <= DB_PREFETCH_THRESHOLD && !isFetchingBatch.current) {
-          const lastTs = replayMetricsAll.current[totalLen - 1].timestamp;
-          fetchBatch(lastTs);
+
+        // 끝에 가까우면 (1) 다음 배치 이어붙이기 + (2) 다음 루프 과거 데이터 미리 fetch
+        if (remaining <= DB_PREFETCH_THRESHOLD) {
+          if (!isFetchingBatch.current) {
+            const lastTs = replayMetricsAll.current[replayMetricsAll.current.length - 1].timestamp;
+            fetchNextBatch(lastTs);
+          }
+          prefetchLoopStart();
         }
 
         setTimeout(step, DB_REPLAY_INTERVAL);
