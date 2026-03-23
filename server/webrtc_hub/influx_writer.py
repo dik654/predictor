@@ -973,11 +973,20 @@ def get_latest_forecast_evaluation(
             h.setdefault("predicted_cpu", 0)
             h.setdefault("predicted_memory", 0)
             h.setdefault("predicted_disk_io", 0)
+            h.setdefault("predicted_network_sent", 0)
+            h.setdefault("predicted_network_recv", 0)
             h.setdefault("ecod_score", 0)
             h.setdefault("rule_score", 0)
             h.setdefault("final_score", 0)
             h.setdefault("reliability", 0.5)
             h.setdefault("is_outlier", False)
+
+            # Rename to match frontend component (pred_cpu, not predicted_cpu)
+            h["pred_cpu"] = h.pop("predicted_cpu")
+            h["pred_memory"] = h.pop("predicted_memory")
+            h["pred_disk_io"] = h.pop("predicted_disk_io")
+            h["pred_network_sent"] = h.pop("predicted_network_sent")
+            h["pred_network_recv"] = h.pop("predicted_network_recv")
 
             # Convert feature_contributions dict → sorted list + fill predicted_value
             fc_dict = h.pop("feature_contributions", {})
@@ -986,11 +995,15 @@ def get_latest_forecast_evaluation(
                 # Fill predicted_value from horizon data
                 for fc in fc_list:
                     if fc["metric"] == "CPU":
-                        fc["predicted_value"] = h["predicted_cpu"]
+                        fc["predicted_value"] = h["pred_cpu"]
                     elif fc["metric"] == "Memory":
-                        fc["predicted_value"] = h["predicted_memory"]
+                        fc["predicted_value"] = h["pred_memory"]
                     elif fc["metric"] == "DiskIO":
-                        fc["predicted_value"] = h["predicted_disk_io"]
+                        fc["predicted_value"] = h["pred_disk_io"]
+                    elif fc["metric"] == "NetworkSent":
+                        fc["predicted_value"] = h["pred_network_sent"]
+                    elif fc["metric"] == "NetworkRecv":
+                        fc["predicted_value"] = h["pred_network_recv"]
                 h["feature_contributions"] = fc_list
             else:
                 h["feature_contributions"] = []
