@@ -429,13 +429,7 @@ async def update_forecast_actual(
     Returns:
         True if successful, False otherwise
     """
-    global client, write_api
-
-    if not client or not write_api:
-        # Try to reconnect if connection was closed
-        init_influx()
-        if not client or not write_api:
-            return False
+    # Reconnection handled inside executor to avoid blocking event loop.
 
     try:
         point = Point("accuracy") \
@@ -454,20 +448,38 @@ async def update_forecast_actual(
             .field("error_percent", float(error_pct)) \
             .field("within_3sigma", 1 if error_pct <= 3.0 else 0)
 
-        # Run blocking write in thread pool to avoid blocking event loop
         def _write_accuracy():
-            write_api.write(bucket=bucket, record=point)
-            write_api.flush()
+            global client, write_api, _last_reconnect
+            import time
+            now = time.time()
+            if now - _last_reconnect > 60:
+                client = None
+                write_api = None
+                _last_reconnect = now
+            if not client or not write_api:
+                log.info("InfluxDB reconnecting in accuracy executor...")
+                init_influx()
+            if not write_api:
+                return False
+            line = point.to_line_protocol()
+            import urllib.request, urllib.error
+            write_url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={bucket}"
+            req = urllib.request.Request(
+                write_url, data=line.encode('utf-8'),
+                headers={"Authorization": f"Token {INFLUX_TOKEN}", "Content-Type": "text/plain; charset=utf-8"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status not in [200, 204]:
+                    return False
+            return True
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(_write_executor, _write_accuracy)
         return True
     except Exception as e:
         if "shutdown" not in str(e).lower():
-            log.error(f"Failed to update forecast accuracy: {e}")
-        # Reset connection on error to try reconnect next time
-        client = None
-        write_api = None
+            log.warning(f"Failed to update forecast accuracy: {e}")
         return False
 
 

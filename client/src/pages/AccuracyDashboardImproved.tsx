@@ -90,8 +90,10 @@ export function AccuracyDashboardImproved() {
   }, [currentData, selectedMetric, selectedHorizon]);
 
   const stats = useMemo(() => {
-    if (!currentData?.records?.length) return { avg: '-', max: '-', min: '-', latest: '-', confidence: '0', count: '0', outliers: '0' };
-    const rawErrors = currentData.records.map(r => parseFloat((r.error_pct ?? 0).toFixed(2)));
+    if (!currentData?.records?.length) return { avg: '-', max: '-', min: '-', latest: '-', confidence: '0', count: '0', outliers: '0', hasData: false };
+    const validRecords = currentData.records.filter(r => r.error_pct != null);
+    if (validRecords.length === 0) return { avg: '-', max: '-', min: '-', latest: '-', confidence: '0', count: '0', outliers: '0', hasData: false };
+    const rawErrors = validRecords.map(r => parseFloat(r.error_pct.toFixed(2)));
 
     // 이상치 제거: 상위 5% 제외
     const sortedErrors = [...rawErrors].sort((a, b) => a - b);
@@ -113,7 +115,8 @@ export function AccuracyDashboardImproved() {
       latest: rawErrors[rawErrors.length - 1]?.toFixed(2) || '0',
       confidence: accuracy,
       count: normalErrors.length.toString(),
-      outliers: outlierCount.toString()
+      outliers: outlierCount.toString(),
+      hasData: true
     };
   }, [currentData]);
 
@@ -211,21 +214,28 @@ export function AccuracyDashboardImproved() {
           textAlign: 'center'
         }}>
           <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>신뢰도 점수</p>
-          <div style={{
-            fontSize: '52px',
-            fontWeight: '700',
-            color: trustColor,
-            marginBottom: '8px',
-            letterSpacing: '-0.5px'
-          }}>
-            {stats.confidence}%
-          </div>
-          <p style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#e2e8f0', fontWeight: '500' }}>
-            {trustMessage}
-          </p>
-          <p style={{ margin: 0, fontSize: '11px', color: '#cbd5e1' }}>
-            {stats.count}개 최근 예측 기반
-          </p>
+          {stats.hasData ? (<>
+            <div style={{
+              fontSize: '52px',
+              fontWeight: '700',
+              color: trustColor,
+              marginBottom: '8px',
+              letterSpacing: '-0.5px'
+            }}>
+              {stats.confidence}%
+            </div>
+            <p style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#e2e8f0', fontWeight: '500' }}>
+              {trustMessage}
+            </p>
+            <p style={{ margin: 0, fontSize: '11px', color: '#cbd5e1' }}>
+              {stats.count}개 최근 예측 기반
+            </p>
+          </>) : (
+            <div style={{ padding: '20px 0' }}>
+              <div style={{ fontSize: '32px', color: '#475569', marginBottom: '8px' }}>—</div>
+              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>예측 정확도 데이터가 아직 없습니다</p>
+            </div>
+          )}
         </div>
 
         {/* Metrics */}

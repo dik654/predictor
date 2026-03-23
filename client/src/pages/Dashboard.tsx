@@ -300,10 +300,10 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc="InfluxDB에서 조회된 최근 메트릭 포인트 수" />
-        <StatCard title="ECOD 이상탐지" value={ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#f43f5e" icon={<Search size={14} />} desc="다변량 분석에서 warning/critical 판정 건수" />
-        <StatCard title="ARIMA 예측 경고" value={arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#8b5cf6" icon={<TrendingUp size={14} />} desc="시계열 예측에서 실제값과 예측값 괴리 감지 건수" />
-        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} desc="평소 연결된 장비의 상태 변화 감지 건수" />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`CPU·메모리·디스크IO·네트워크 등 개별 지표 ${metricsCount}건 (5개 메트릭 × ${Math.round(metricsCount / 5)}회 수신)`} />
+        <StatCard title="ECOD 이상탐지" value={ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#f43f5e" icon={<Search size={14} />} desc="14개 지표를 동시 분석하여 정상 범위를 벗어난 항목 수 (아래 ECOD 차트에서 상세 확인)" />
+        <StatCard title="ARIMA 예측 경고" value={arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#8b5cf6" icon={<TrendingUp size={14} />} desc="과거 패턴 기반 예측값과 실제값의 차이가 임계값을 넘은 횟수 (아래 ARIMA 차트에서 상세 확인)" />
+        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} desc="평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수" />
       </div>
 
       {/* Charts Row 1 */}
@@ -400,7 +400,7 @@ function StatCard({ title, value, color = '#3b82f6', icon, desc }: { title: stri
         {title}
       </div>
       <div style={{ fontSize: '22px', fontWeight: 600, color: '#e2e8f0' }}>{value}</div>
-      {desc && <div style={{ fontSize: '10px', color: '#64748b', marginTop: '4px', lineHeight: '1.3' }}>{desc}</div>}
+      {desc && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px', lineHeight: '1.4' }}>{desc}</div>}
     </div>
   );
 }

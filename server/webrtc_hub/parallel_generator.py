@@ -28,7 +28,7 @@ from .detector import (
     ECOD_WEIGHT, ARIMA_WEIGHT,
 )
 from . import influx_writer
-from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation
+from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation, write_peripheral_status, DEVICE_NAME_MAP
 from .predict_tracker import PredictTracker
 from .forecast_evaluator import ForecastEvaluator
 
@@ -156,6 +156,11 @@ def synthesize(base: List[dict], slots: List[datetime], agent_id: str,
             "Timestamp": ts.isoformat() + "Z",
             "CPU": round(cpu, 1), "Memory": round(mem, 1), "DiskIO": round(disk, 2),
             "Network": {"Sent": sent, "Recv": recv},
+            "Process": {"GSRTL.CVS.POS.Shell": 1},
+            "Peripherals": {
+                "dongle": 1, "hand_scanner": 1, "keyboard": 1, "msr": 1,
+                "2d_scanner": 0, "phone_charger": 0, "passport_reader": -1,
+            },
             "StoreInfo": store_info,
             "_nanos_offset": 0,
         })
@@ -426,6 +431,21 @@ async def _write_to_bucket(dp, result, bucket, aid, ts_val, tracker, fe, forecas
                             raw_metrics=raw, bucket=bucket, full_data=dp)
     except Exception as e:
         log.warning(f"Metrics write error ({bucket}): {e}")
+
+    # Write peripheral status
+    if dp.get("Peripherals"):
+        try:
+            # Convert eng keys to Korean for write_peripheral_status
+            _reverse_map = {v: k for k, v in DEVICE_NAME_MAP.items()}
+            periph_kr = {_reverse_map.get(k, k): ("정상" if v == 1 else ("미연결" if v == 0 else "미사용"))
+                         for k, v in dp["Peripherals"].items()}
+            await write_peripheral_status(
+                agent_id=dp["AgentId"], timestamp=dp["Timestamp"],
+                peripheral_data=periph_kr, bucket=bucket,
+                store_info=dp.get("StoreInfo", {}),
+            )
+        except Exception as e:
+            log.warning(f"Peripheral write error ({bucket}): {e}")
 
     if result:
         for det in result.detections:
