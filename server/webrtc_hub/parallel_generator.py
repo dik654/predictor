@@ -638,7 +638,7 @@ def cli(file_path, interval_min, hours, agent_id, bucket, start_after,
     if resume:
         init_influx()
         last_ts = get_last_metric_time(agent_id, bucket)
-        close_influx()
+        # close_influx()를 호출하지 않음 — main()에서 재사용
         if last_ts:
             log.info(f"Resume: last metric at {last_ts}, generating from there to now")
             start_after = last_ts
