@@ -1274,6 +1274,8 @@ def get_recent_metrics(
           |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
               or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
           |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> group()
+          |> sort(columns: ["_time"], desc: false)
           |> tail(n: {limit})
         '''
 
@@ -1321,12 +1323,12 @@ def get_recent_detections(
         return []
 
     try:
+        # tail per series 문제를 피하기 위해 충분히 가져온 후 파이썬에서 시점 기준 제한
         query = f'''
         from(bucket: "{target_bucket}")
           |> range(start: -1d)
           |> filter(fn: (r) => r._measurement == "anomaly_detection")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
-          |> tail(n: {limit})
         '''
 
         query_api = client.query_api()
@@ -1370,6 +1372,12 @@ def get_recent_detections(
                     rec["actual_value"] = float(value)
 
         records = sorted(records_map.values(), key=lambda x: x["timestamp"])
+
+        # 시점(timestamp) 기준으로 마지막 limit개만 유지
+        unique_times = sorted(set(r["timestamp"] for r in records))
+        if len(unique_times) > limit:
+            cutoff = unique_times[-limit]
+            records = [r for r in records if r["timestamp"] >= cutoff]
         log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records")
         return records
 

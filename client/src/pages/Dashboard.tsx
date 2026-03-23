@@ -41,8 +41,8 @@ const METRIC_KO: Record<string, string> = {
 const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
 
 const MODE_CONFIG = {
-  db:       { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT * 15, pollInterval: 5_000 },
-  realtime: { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT * 15, pollInterval: 2_000 },
+  db:       { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT, pollInterval: 5_000 },
+  realtime: { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT, pollInterval: 2_000 },
 } as const;
 
 export function Dashboard() {
