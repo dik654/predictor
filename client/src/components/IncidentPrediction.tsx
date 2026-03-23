@@ -717,14 +717,7 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
   const option = useMemo(() => {
     const labels = horizons.map(h => horizonLabel(h.horizon_min));
     const riskData = horizons.map(h => h.final_score * 100);
-
-    const metricSeries = [
-      { name: 'CPU 사용률', data: horizons.map(h => h.pred_cpu), color: '#3b82f6' },
-      { name: '메모리 사용률', data: horizons.map(h => h.pred_memory), color: '#22c55e' },
-      { name: '디스크 사용률', data: horizons.map(h => h.pred_disk_io), color: '#f59e0b' },
-      { name: '네트워크 송신', data: horizons.map(h => h.pred_network_sent ?? 0), color: '#06b6d4' },
-      { name: '네트워크 수신', data: horizons.map(h => h.pred_network_recv ?? 0), color: '#14b8a6' },
-    ];
+    const reliData = horizons.map(h => h.reliability * 100);
 
     return {
       backgroundColor: 'transparent',
@@ -733,13 +726,17 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
         backgroundColor: 'rgba(15, 23, 42, 0.95)',
         borderColor: '#1f2937',
         textStyle: { color: '#e2e8f0', fontSize: 11 },
+        formatter: (params: any) => {
+          if (!params.length) return '';
+          const idx = params[0].dataIndex;
+          const h = horizons[idx];
+          return `<b>${labels[idx]}</b><br/>
+            위험도: ${(h.final_score * 100).toFixed(1)}%<br/>
+            신뢰도: ${(h.reliability * 100).toFixed(0)}%<br/>
+            이상 점수: ${(h.ecod_score * 100).toFixed(1)}%`;
+        },
       },
-      legend: {
-        bottom: 0,
-        textStyle: { color: '#cbd5e1', fontSize: 11 },
-        itemWidth: 12, itemHeight: 8,
-      },
-      grid: { top: 30, right: 60, bottom: 50, left: 50 },
+      grid: { top: 30, right: 20, bottom: 40, left: 50 },
       xAxis: {
         type: 'category' as const,
         data: labels,
@@ -747,35 +744,28 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
         axisTick: { show: false },
         axisLine: { lineStyle: { color: '#1f2937' } },
       },
-      yAxis: [
-        {
-          type: 'value' as const, name: '메트릭', position: 'left' as const,
-          axisLabel: { color: '#64748b', fontSize: 10 },
-          nameTextStyle: { color: '#64748b', fontSize: 11 },
-          splitLine: { lineStyle: { color: '#1e293b' } },
-        },
-        {
-          type: 'value' as const, name: '위험도 %', min: 0, max: 100, position: 'right' as const,
-          axisLabel: { color: '#64748b', fontSize: 10 },
-          nameTextStyle: { color: '#64748b', fontSize: 11 },
-          splitLine: { show: false },
-        },
-      ],
+      yAxis: {
+        type: 'value' as const, name: '%', min: 0, max: 100,
+        axisLabel: { color: '#64748b', fontSize: 10 },
+        nameTextStyle: { color: '#64748b', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#1e293b' } },
+      },
       series: [
-        ...metricSeries.map(s => ({
-          name: s.name, type: 'line' as const, data: s.data, smooth: true,
-          lineStyle: { color: s.color, width: 1.5 },
-          itemStyle: { color: s.color }, symbol: 'none' as const,
-        })),
         {
-          name: '위험도', type: 'bar' as const, yAxisIndex: 1, data: riskData.map(v => ({
+          name: '위험도', type: 'bar' as const, data: riskData.map(v => ({
             value: v,
             itemStyle: {
-              color: v >= 70 ? 'rgba(239,68,68,0.7)' : v >= 50 ? 'rgba(251,191,36,0.6)' : 'rgba(59,130,246,0.4)',
+              color: v >= 70 ? 'rgba(239,68,68,0.7)' : v >= 40 ? 'rgba(251,191,36,0.6)' : 'rgba(59,130,246,0.5)',
               borderRadius: [3, 3, 0, 0],
             },
           })),
-          barWidth: '25%',
+          barWidth: '30%',
+          label: { show: true, position: 'top' as const, color: '#cbd5e1', fontSize: 11, formatter: '{c}%' },
+        },
+        {
+          name: '신뢰도', type: 'line' as const, data: reliData, smooth: true,
+          lineStyle: { color: '#a78bfa', width: 2, type: 'dashed' as const },
+          itemStyle: { color: '#a78bfa' }, symbol: 'circle' as const, symbolSize: 6,
         },
       ],
     };
@@ -783,8 +773,11 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
 
   return (
     <div style={{ backgroundColor: '#1e293b', borderRadius: 12, padding: 20 }}>
-      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#e2e8f0' }}>4 - 시간대별 예측값 및 위험도</h4>
-      <ReactECharts option={option} style={{ height: 300 }} />
+      <h4 style={{ margin: '0 0 4px', fontSize: 14, color: '#e2e8f0' }}>4 - 시간대별 위험도</h4>
+      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+        메트릭·로그·주변장치 데이터를 종합 분석한 위험도. 먼 미래일수록 신뢰도가 낮아집니다.
+      </div>
+      <ReactECharts option={option} style={{ height: 280 }} />
     </div>
   );
 }

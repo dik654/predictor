@@ -50,6 +50,30 @@ def query_forecasts(client, bucket: str, agent_id: str, days: int = 7) -> List[d
                 "predicted_value": float(record.get_value()),
             })
     log.info(f"Loaded {len(results)} forecast records from {bucket}")
+
+    # 없는 horizon(720/1440/2880)을 가장 긴 예측값으로 채우기
+    REQUIRED_HORIZONS = [60, 360, 720, 1440, 2880]
+    from collections import defaultdict
+    by_time_metric = defaultdict(dict)  # (time, metric) -> {horizon: predicted}
+    for r in results:
+        key = (r["time"], r["metric"])
+        by_time_metric[key][r["horizon_min"]] = r["predicted_value"]
+
+    extra = []
+    for (t, m), horizons in by_time_metric.items():
+        available = {h: v for h, v in horizons.items() if h in REQUIRED_HORIZONS}
+        if not available:
+            continue
+        max_h = max(available.keys())
+        fallback = available[max_h]
+        for h in REQUIRED_HORIZONS:
+            if h not in horizons:
+                extra.append({"time": t, "metric": m, "horizon_min": h, "predicted_value": fallback})
+
+    results.extend(extra)
+    # 30분 등 불필요한 horizon 제거
+    results = [r for r in results if r["horizon_min"] in REQUIRED_HORIZONS]
+    log.info(f"After horizon fill: {len(results)} records")
     return results
 
 

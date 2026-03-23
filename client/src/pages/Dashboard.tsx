@@ -41,7 +41,7 @@ const METRIC_KO: Record<string, string> = {
 const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
 
 const DB_REPLAY_BATCH = 1000;   // DB에서 한 번에 가져올 시점 수
-const DB_REPLAY_INTERVAL = 500; // 재생 간격 (ms)
+const DB_REPLAY_INTERVAL = 5000; // 재생 간격 (ms)
 
 const MODE_CONFIG = {
   db:       { metricsLimit: DB_REPLAY_BATCH, detectionsLimit: DB_REPLAY_BATCH, pollInterval: 5_000 },
