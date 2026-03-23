@@ -1231,7 +1231,7 @@ def get_recent_metrics(
     try:
         query = f'''
         from(bucket: "{target_bucket}")
-          |> range(start: -7d)
+          |> range(start: -1d)
           |> filter(fn: (r) => r._measurement == "metrics")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
@@ -1288,7 +1288,7 @@ def get_recent_detections(
     try:
         query = f'''
         from(bucket: "{target_bucket}")
-          |> range(start: -7d)
+          |> range(start: -1d)
           |> filter(fn: (r) => r._measurement == "anomaly_detection")
           |> filter(fn: (r) => r.agent_id == "{agent_id}")
           |> tail(n: {limit})

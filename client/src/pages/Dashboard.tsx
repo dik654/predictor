@@ -298,7 +298,13 @@ export function Dashboard() {
         </div>
       </header>
 
-      {/* Stats Row removed */}
+      {/* Stats Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
+        <StatCard title="수신 데이터" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} />
+        <StatCard title="ECOD 분석" value={ecodData.filter(d => d.metric === 'Multivariate').length} color="#f43f5e" icon={<Search size={14} />} />
+        <StatCard title="ARIMA 예측" value={arimaData.length} color="#8b5cf6" icon={<TrendingUp size={14} />} />
+        <StatCard title="주변장치 경고" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} />
+      </div>
 
       {/* Charts Row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px', alignItems: 'stretch' }}>
@@ -336,7 +342,52 @@ export function Dashboard() {
         <ReactECharts option={arimaChartOption} style={{ height: '500px' }} />
       </div>
 
-      {/* Detection Table removed */}
+      {/* Detection Table */}
+      <div style={{ ...card, padding: '16px', marginTop: '12px' }}>
+        <h3 style={{ margin: '0 0 16px', fontSize: '16px' }}>
+          탐지 히스토리 ({viewMode === 'realtime' ? '실시간' : 'DB 전체'})
+        </h3>
+        {allDetections.length === 0 ? (
+          <p style={{ color: '#cbd5e1', textAlign: 'center', padding: '40px' }}>
+            InfluxDB에서 데이터 조회 중... ({viewMode === 'realtime' ? '2초' : '5초'} 주기 폴링)
+          </p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #334155' }}>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
+                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
+                  <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allDetections.map((d) => (
+                  <tr key={`${d.timestamp}-${d.engine}-${d.metric}`} style={{ borderBottom: '1px solid #1e293b', animation: 'fadeSlideIn 0.3s ease' }}>
+                    <td style={{ padding: '8px 10px' }}>
+                      {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : '-'}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}><EngineTag engine={d.engine} /></td>
+                    <td style={{ padding: '8px 10px' }}>{d.metric}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{d.score?.toFixed(3)}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                      {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
+                    <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
+                      {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
