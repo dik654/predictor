@@ -108,8 +108,8 @@ export function AccuracyDashboardImproved() {
     // 설명: "1시간 예측은 5% 이내가 우수, 2일 예측은 30% 이내도 우수로 인정"
     const HORIZON_THRESHOLD: Record<number, { excellent: number; good: number }> = {
       60: { excellent: 5, good: 10 },
-      360: { excellent: 6, good: 11 },
-      720: { excellent: 7, good: 13 },
+      360: { excellent: 12, good: 20 },
+      720: { excellent: 15, good: 25 },
       1440: { excellent: 8, good: 15 },
       2880: { excellent: 10, good: 18 },
     };

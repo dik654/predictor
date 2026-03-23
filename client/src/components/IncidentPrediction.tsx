@@ -140,12 +140,20 @@ const METRIC_ORDER: string[] = [
   'Process', 'POS_Idle',
 ];
 
+// 값 포맷 함수
+function fmtVal(metric: string, value: number): string {
+  if (metric === 'NetworkSent' || metric === 'NetworkRecv') return (value / 1024).toFixed(1) + 'KB';
+  if (metric === 'DiskIO') return value.toFixed(2) + 'MB/s';
+  if (metric === 'CPU' || metric === 'Memory') return value.toFixed(1) + '%';
+  return value.toFixed(1);
+}
+
 const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; unit: string }> = {
   CPU: { warning: 80, critical: 90, unit: '%' },
   Memory: { warning: 85, critical: 95, unit: '%' },
-  DiskIO: { warning: 70, critical: 85, unit: '' },
-  NetworkSent: { warning: 50000, critical: 100000, unit: 'B' },
-  NetworkRecv: { warning: 50000, critical: 100000, unit: 'B' },
+  DiskIO: { warning: 0.7, critical: 0.85, unit: 'MB/s' },
+  NetworkSent: { warning: 50, critical: 100, unit: 'KB' },
+  NetworkRecv: { warning: 50, critical: 100, unit: 'KB' },
   // 이산값: 0=실패, 1=정상
   Dongle: { warning: 0.5, critical: 0, unit: '' },
   HandScanner: { warning: 0.5, critical: 0, unit: '' },
@@ -329,7 +337,7 @@ function SummaryCard({ evaluation, worst, isRisky, topFeature, earliestRisk, rec
         }}>
           {topFeature && (
             <span>
-              <strong style={{ color: sev.color }}>원인:</strong> {metricKo(topFeature.metric)} 예측값 {topFeature.predicted_value.toFixed(1)} (기여도 {topFeature.pct.toFixed(0)}%)
+              <strong style={{ color: sev.color }}>원인:</strong> {metricKo(topFeature.metric)} 예측값 {fmtVal(topFeature.metric, topFeature.predicted_value)} ({topFeature.pct.toFixed(1)}%)
             </span>
           )}
           {topFeature && ' · '}
@@ -422,12 +430,9 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
                     </span>
                   )}
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <span style={{ fontSize: 16, fontWeight: 700, color: isTop ? '#c084fc' : '#a5b4fc' }}>
-                    {fc.pct.toFixed(0)}%
-                  </span>
-                  <div style={{ fontSize: 11, color: '#cbd5e1' }}>기여도</div>
-                </div>
+                <span style={{ fontSize: 16, fontWeight: 700, color: isTop ? '#c084fc' : '#a5b4fc' }}>
+                  {fc.pct.toFixed(1)}%
+                </span>
               </div>
 
               {/* 바: 내부에 퍼센트 라벨 포함 */}
@@ -452,13 +457,13 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
                 marginTop: 6, fontSize: 11, color: '#cbd5e1',
               }}>
                 <span>
-                  예측값 <strong style={{ color: '#e2e8f0' }}>{fc.predicted_value.toFixed(1)}{unit}</strong>
+                  예측값 <strong style={{ color: '#e2e8f0' }}>{fmtVal(fc.metric, fc.predicted_value)}</strong>
                 </span>
                 {threshold && (
                   <span>
                     {threshold.critical === 0
                       ? <><span style={{ color: '#22c55e' }}>1=정상</span> / <span style={{ color: '#ef4444' }}>0=실패</span></>
-                      : <>주의 <span style={{ color: '#f59e0b' }}>{threshold.warning}{unit}</span>{' / '}위험 <span style={{ color: '#ef4444' }}>{threshold.critical}{unit}</span></>}
+                      : <>주의 <span style={{ color: '#f59e0b' }}>{threshold.warning}{unit}</span> / 위험 <span style={{ color: '#ef4444' }}>{threshold.critical}{unit}</span></>}
                   </span>
                 )}
               </div>
@@ -579,7 +584,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                           fontSize: 10, fontWeight: 600,
                           color: isCrit ? '#ef4444' : isWarn ? '#f59e0b' : '#cbd5e1',
                         }}>
-                          {val.toFixed(1)}{unit}
+                          {fmtVal(t.metric, val)}
                         </span>
                         <span style={{ fontSize: 9, color: '#cbd5e1' }}>{t.labels[i]}</span>
                       </div>
@@ -612,17 +617,20 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
           marginBottom: 8, fontSize: 11, lineHeight: 1.6, color: '#cbd5e1',
         }}>
           <div style={{ fontWeight: 600, color: '#c084fc', marginBottom: 4 }}>
-            이상 점수란?
+            이상 점수(ECOD Score)
           </div>
           <div>
-            STEP 1에서 예측한 CPU·메모리·디스크·네트워크 값의 조합을 과거 7일간의 정상 패턴(ECOD 모델)과 비교한 결과입니다.
+            예측된 메트릭 조합을 과거 7일 정상 패턴과 비교한 백분위 순위입니다. (0.0=정상 중앙, 1.0=학습 데이터 중 가장 극단)
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <b style={{ color: '#94a3b8' }}>최대 위험도</b> = max(각 시간대 위험도). 위험도 = 이상 점수 × 신뢰도
           </div>
           <div style={{
             display: 'flex', gap: 12, marginTop: 6, fontSize: 10,
           }}>
-            <span><strong style={{ color: '#22c55e' }}>0~30%</strong> 평소와 비슷</span>
-            <span><strong style={{ color: '#f59e0b' }}>30~70%</strong> 다소 특이</span>
-            <span><strong style={{ color: '#ef4444' }}>70~100%</strong> 거의 본 적 없는 조합</span>
+            <span><strong style={{ color: '#22c55e' }}>0~0.3</strong> 평소와 비슷</span>
+            <span><strong style={{ color: '#f59e0b' }}>0.3~0.7</strong> 다소 특이</span>
+            <span><strong style={{ color: '#ef4444' }}>0.7~1.0</strong> 매우 이례적</span>
           </div>
         </div>
 
@@ -648,13 +656,13 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div style={{ flex: 1, height: 6, backgroundColor: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
                     <div className="pulse-bar-shimmer pulse-bar-fill-h" style={{
-                      height: '100%', width: `${Math.min(ecodPct, 100)}%`,
+                      height: '100%', width: `${Math.min(h.ecod_score * 100, 100)}%`,
                       background: 'linear-gradient(90deg, #7c3aed, #c084fc)',
                       borderRadius: 3,
                     }} />
                   </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#c084fc', width: 32, textAlign: 'right' }}>
-                    {ecodPct.toFixed(0)}%
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#c084fc', width: 36, textAlign: 'right' }}>
+                    {h.ecod_score.toFixed(3)}
                   </span>
                 </div>
 
@@ -700,7 +708,7 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
           fontSize: 10, color: '#cbd5e1',
         }}>
           <span style={{ width: 56 }}></span>
-          <span style={{ flex: 1, textAlign: 'center', color: '#c084fc' }}>이상 점수</span>
+          <span style={{ flex: 1, textAlign: 'center', color: '#c084fc' }}>ECOD Score</span>
           <span style={{ width: 12 }}></span>
           <span style={{ flex: 1, textAlign: 'center', color: '#4ade80' }}>신뢰도</span>
           <span style={{ width: 12 }}></span>

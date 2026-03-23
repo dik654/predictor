@@ -66,6 +66,18 @@ export function Dashboard() {
   const [dbConnected, setDbConnected] = useState(false);
   const prevMetricsLen = useRef(0);
   const prevDetectionsLen = useRef(0);
+  const [periphStatus, setPeriphStatus] = useState<Record<string, { status: number | null }>>({});
+
+  // 주변장치 상태 조회 (peripheral_status 측정값 직접)
+  const fetchPeriphStatus = useCallback(async () => {
+    try {
+      const resp = await fetch(`${serverUrl}/api/peripheral-status?agent_id=V135-POS-03`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setPeriphStatus(data.devices || {});
+      }
+    } catch { /* ignore */ }
+  }, [serverUrl]);
 
   // DB 재생 모드 상태
   const replayMetricsAll = useRef<InfluxMetric[]>([]);
@@ -134,6 +146,7 @@ export function Dashboard() {
         replayMetricsAll.current = mData.metrics || [];
         replayDetectionsAll.current = dData.detections || [];
         setDbConnected(replayMetricsAll.current.length > 0);
+        fetchPeriphStatus();
 
         if (replayMetricsAll.current.length === 0) {
           setReplayPlaying(false);
@@ -197,11 +210,14 @@ export function Dashboard() {
 
     fetchMetrics(cfg.metricsLimit);
     fetchDetections(cfg.detectionsLimit);
+    fetchPeriphStatus();
     const metricsInterval = setInterval(() => fetchMetrics(cfg.metricsLimit), cfg.pollInterval);
     const detectionsInterval = setInterval(() => fetchDetections(cfg.detectionsLimit), cfg.pollInterval);
+    const periphInterval = setInterval(fetchPeriphStatus, cfg.pollInterval);
     return () => {
       clearInterval(metricsInterval);
       clearInterval(detectionsInterval);
+      clearInterval(periphInterval);
     };
   }, [viewMode, fetchMetrics, fetchDetections]);
 
@@ -224,19 +240,10 @@ export function Dashboard() {
   const PERIPHERAL_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR']);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod');
   const arimaData = dbDetections.filter(d => d.engine === 'arima');
-  // 주변장치 이상: 최근 탐지에서 실제 꺼짐(actual_value=0)인 장치
-  const peripheralWarnDevices = (() => {
-    const allPeriphDetections = dbDetections.filter(d =>
-      d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric))
-    );
-    // 각 장치의 가장 최근 탐지 결과 기준
-    const latestByDevice = new Map<string, typeof allPeriphDetections[0]>();
-    for (const d of allPeriphDetections) {
-      const prev = latestByDevice.get(d.metric);
-      if (!prev || d.timestamp > prev.timestamp) latestByDevice.set(d.metric, d);
-    }
-    return [...latestByDevice.values()].filter(d => d.actual_value === 0);
-  })();
+  // 주변장치 꺼짐: peripheral-status API 기반 (PeripheralCards와 동일 소스)
+  const peripheralWarnDevices = Object.entries(periphStatus)
+    .filter(([_, v]) => v.status === 0)
+    .map(([k]) => k);
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
   const latestDetections = dbDetections.slice(-30);
@@ -494,7 +501,7 @@ export function Dashboard() {
             ? `동일 ${DATA_LIMIT}개 시점 기준 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${METRIC_KO[d.metric] || d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `동일 ${DATA_LIMIT}개 시점 기준 — 경고 없음`} />
         <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d.metric] || d.metric).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '최신 상태 기준 — 7개 장치 모두 연결'} />
+          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)` : '최신 상태 기준 — 7개 장치 모두 연결'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -511,6 +518,15 @@ export function Dashboard() {
             ))}
           </div>
           <ReactECharts option={ecodChartOption} style={{ flex: 1, minHeight: '300px' }} />
+          <div style={{ fontSize: '11px', color: '#525e6f', lineHeight: '1.7', padding: '10px 12px', marginTop: '8px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #1e293b' }}>
+            <div style={{ color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>ECOD 이상 탐지 원리</div>
+            <div>1. 과거 7일간 수집된 메트릭·로그·주변장치 데이터로 <b style={{ color: '#94a3b8' }}>정상 패턴 학습</b> (ECOD 모델)</div>
+            <div>2. 현재 데이터 포인트의 <b style={{ color: '#94a3b8' }}>백분위 순위</b> 계산 → Score (0.0=평범, 1.0=극단)</div>
+            <div style={{ paddingLeft: '12px', color: '#475569' }}>Score = (학습 데이터 중 현재 값보다 낮은 비율). 예) Score 0.95 = 상위 5%</div>
+            <div>3. 14개 지표를 동시 분석하여 <b style={{ color: '#94a3b8' }}>복합 이상 판별</b></div>
+            <div style={{ paddingLeft: '12px', color: '#475569' }}>CPU·메모리·디스크IO·네트워크(송수신)·프로세스·주변장치(7종)·POS유휴</div>
+            <div>4. Score ≥ 0.95 또는 절대 임계값 초과 시 <b style={{ color: '#f59e0b' }}>warning</b>, CPU ≥ 90% 등 위험 수준 시 <b style={{ color: '#ef4444' }}>critical</b></div>
+          </div>
         </div>
         <StatusInsightCard detections={latestDetections} healthScore={healthScore} />
       </div>

@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
-import { AccuracyDashboardImproved } from './pages/AccuracyDashboardImproved';
+// import { AccuracyDashboardImproved } from './pages/AccuracyDashboardImproved';
 import { IncidentPredictionPage } from './pages/IncidentPredictionPage';
 
 function App() {
@@ -9,7 +9,7 @@ function App() {
       <Navigation />
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/accuracy" element={<AccuracyDashboardImproved />} />
+        {/* <Route path="/accuracy" element={<AccuracyDashboardImproved />} /> */}
         <Route path="/incident-prediction" element={<IncidentPredictionPage />} />
       </Routes>
     </BrowserRouter>
@@ -18,7 +18,7 @@ function App() {
 
 const NAV_ITEMS = [
   { path: '/', label: 'Dashboard' },
-  { path: '/accuracy', label: 'Accuracy Analytics' },
+  // { path: '/accuracy', label: 'Accuracy Analytics' },
   { path: '/incident-prediction', label: '사고 예측 분석' },
 ];
 
