@@ -300,10 +300,10 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="수신 데이터" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} />
-        <StatCard title="ECOD 분석" value={ecodData.filter(d => d.metric === 'Multivariate').length} color="#f43f5e" icon={<Search size={14} />} />
-        <StatCard title="ARIMA 예측" value={arimaData.length} color="#8b5cf6" icon={<TrendingUp size={14} />} />
-        <StatCard title="주변장치 경고" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc="InfluxDB에서 조회된 최근 메트릭 포인트 수" />
+        <StatCard title="ECOD 이상탐지" value={ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#f43f5e" icon={<Search size={14} />} desc="다변량 분석에서 warning/critical 판정 건수" />
+        <StatCard title="ARIMA 예측 경고" value={arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical').length} color="#8b5cf6" icon={<TrendingUp size={14} />} desc="시계열 예측에서 실제값과 예측값 괴리 감지 건수" />
+        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} desc="평소 연결된 장비의 상태 변화 감지 건수" />
       </div>
 
       {/* Charts Row 1 */}
@@ -359,9 +359,9 @@ export function Dashboard() {
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>시간</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>엔진</th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>메트릭</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>Score</th>
-                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }}>신뢰도</th>
-                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }}>심각도</th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title="ECOD: 학습 데이터 내 백분위 (0=정상, 1=극단)&#10;ARIMA: 잔차/임계값 비율 (1 초과=이상)&#10;이진: 상태변화 없으면 0, 꺼지면 1">Score <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
+                  <th style={{ padding: '10px', textAlign: 'right', color: '#cbd5e1' }} title="학습 데이터 양 기반&#10;20건 미만: 40% (낮음)&#10;20~60건: 70% (보통)&#10;60건 이상: 90% (높음)">신뢰도 <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
+                  <th style={{ padding: '10px', textAlign: 'center', color: '#cbd5e1' }} title="Critical: 위험 임계값 초과 (CPU>90%, Mem>95%) 또는 장비 꺼짐&#10;Warning: 주의 임계값 초과 (CPU>80%, Mem>85%) 또는 Score≥0.95&#10;Normal: 정상 범위">심각도 <span style={{ fontSize: '9px', color: '#64748b' }}>&#9432;</span></th>
                   <th style={{ padding: '10px', textAlign: 'left', color: '#cbd5e1' }}>상세</th>
                 </tr>
               </thead>
@@ -392,7 +392,7 @@ export function Dashboard() {
   );
 }
 
-function StatCard({ title, value, color = '#3b82f6', icon }: { title: string; value: number; color?: string; icon?: ReactNode }) {
+function StatCard({ title, value, color = '#3b82f6', icon, desc }: { title: string; value: number; color?: string; icon?: ReactNode; desc?: string }) {
   return (
     <div style={{ backgroundColor: '#111827', borderRadius: '10px', padding: '14px 16px', border: '1px solid #1f2937', borderTop: `2px solid ${color}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 500 }}>
@@ -400,6 +400,7 @@ function StatCard({ title, value, color = '#3b82f6', icon }: { title: string; va
         {title}
       </div>
       <div style={{ fontSize: '22px', fontWeight: 600, color: '#e2e8f0' }}>{value}</div>
+      {desc && <div style={{ fontSize: '10px', color: '#64748b', marginTop: '4px', lineHeight: '1.3' }}>{desc}</div>}
     </div>
   );
 }

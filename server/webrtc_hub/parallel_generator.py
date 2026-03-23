@@ -418,12 +418,50 @@ class ParallelDetector:
         self.executor.shutdown(wait=False)
 
 
+async def _write_to_bucket(dp, result, bucket, aid, ts_val, tracker, fe, forecasts_by_horizon, total_forecasts, total_evals):
+    """Write metrics + forecasts + evaluations to a single bucket."""
+    try:
+        raw = {"CPU": dp["CPU"], "Memory": dp["Memory"], "DiskIO": dp["DiskIO"], "_nanos_offset": 0}
+        await write_metrics(agent_id=dp["AgentId"], timestamp=dp["Timestamp"],
+                            raw_metrics=raw, bucket=bucket, full_data=dp)
+    except Exception as e:
+        log.warning(f"Metrics write error ({bucket}): {e}")
+
+    if result:
+        for det in result.detections:
+            if det.engine == "arima" and det.forecast_horizon:
+                for fh in det.forecast_horizon:
+                    try:
+                        await write_forecast(agent_id=aid, timestamp=ts_val,
+                                             metric=det.metric, horizon_min=fh["minutes"],
+                                             predicted_value=fh["value"], bucket=bucket)
+                        total_forecasts[0] += 1
+                    except Exception:
+                        pass
+
+        if forecasts_by_horizon:
+            eval_result = fe.evaluate(aid, ts_val, forecasts_by_horizon)
+            eval_dict = fe.to_dict(eval_result)
+            try:
+                await write_forecast_evaluation(
+                    agent_id=aid, timestamp=ts_val,
+                    horizons=eval_dict.get("horizons", []),
+                    overall_severity=eval_dict.get("overall_severity", "normal"),
+                    model_ready=eval_dict.get("model_ready", False),
+                    data_source=eval_dict.get("data_source", "none"),
+                    bucket=bucket,
+                )
+                total_evals[0] += 1
+            except Exception:
+                pass
+
+
 async def main(
     file_path: str, interval_min: int, hours: int,
     agent_id: str, bucket: str, start_after: str,
     store_code: str, store_name: str, pos_no: str,
     region_code: str, region_name: str,
-    seed: int, workers: int,
+    seed: int, workers: int, also_bucket: str = "",
 ):
     store_info = {
         "StoreCode": store_code, "StoreName": store_name,
@@ -474,6 +512,10 @@ async def main(
     data_points = synthesize(base, slots, agent_id, store_info, seed)
 
     # Connect to InfluxDB
+    buckets = [bucket]
+    if also_bucket:
+        buckets.append(also_bucket)
+        log.info(f"Writing to both buckets: {buckets}")
     influx_writer.INFLUX_BUCKET = bucket
     init_influx()
 
@@ -481,8 +523,8 @@ async def main(
     detector = ParallelDetector(interval_min=interval_min, n_workers=workers)
     tracker = PredictTracker(retention_hours=24)
     fe = ForecastEvaluator()
-    total_forecasts = 0
-    total_evals = 0
+    total_forecasts = [0]  # mutable for helper
+    total_evals = [0]
     warmup = min(30, max(5, total // 3))
 
     log.info(f"Single-pass: detect (parallel ARIMA) + write ({total} slots, warmup={warmup})...")
@@ -498,32 +540,15 @@ async def main(
         except Exception as e:
             log.error(f"Detection error slot {i}: {e}")
 
-        # Write metrics
-        try:
-            raw = {"CPU": dp["CPU"], "Memory": dp["Memory"], "DiskIO": dp["DiskIO"], "_nanos_offset": 0}
-            await write_metrics(agent_id=dp["AgentId"], timestamp=dp["Timestamp"],
-                                raw_metrics=raw, bucket=bucket, full_data=dp)
-        except Exception as e:
-            log.warning(f"Metrics write error {i}: {e}")
-
-        # Write forecasts
+        # Build forecast horizon map
+        aid = dp["AgentId"]
+        ts_val = dp["Timestamp"]
+        forecasts_by_horizon: dict = {}
         if result and i >= warmup:
-            aid = dp["AgentId"]
-            ts_val = dp["Timestamp"]
-            forecasts_by_horizon: dict = {}
-
             for det in result.detections:
                 if det.engine == "arima" and det.forecast_horizon:
                     for fh in det.forecast_horizon:
-                        try:
-                            await write_forecast(agent_id=aid, timestamp=ts_val,
-                                                 metric=det.metric, horizon_min=fh["minutes"],
-                                                 predicted_value=fh["value"], bucket=bucket)
-                            tracker.record(aid, det.metric, ts_val, fh["minutes"], fh["value"])
-                            total_forecasts += 1
-                        except Exception:
-                            pass
-
+                        tracker.record(aid, det.metric, ts_val, fh["minutes"], fh["value"])
                         h_min = fh["minutes"]
                         if h_min not in forecasts_by_horizon:
                             forecasts_by_horizon[h_min] = {}
@@ -531,24 +556,18 @@ async def main(
                         if mk == "diskio": mk = "disk_io"
                         forecasts_by_horizon[h_min][mk] = fh["value"]
 
-            if forecasts_by_horizon:
-                fe.update_event(aid, dp)
-                fe.update_fallback_buffer(aid, dp)
-                eval_result = fe.evaluate(aid, ts_val, forecasts_by_horizon)
-                eval_dict = fe.to_dict(eval_result)
-                try:
-                    await write_forecast_evaluation(
-                        agent_id=aid, timestamp=ts_val,
-                        horizons=eval_dict.get("horizons", []),
-                        overall_severity=eval_dict.get("overall_severity", "normal"),
-                        model_ready=eval_dict.get("model_ready", False),
-                        data_source=eval_dict.get("data_source", "none"),
-                        bucket=bucket,
-                    )
-                    total_evals += 1
-                except Exception:
-                    pass
+            fe.update_event(aid, dp)
+            fe.update_fallback_buffer(aid, dp)
 
+        # Write to all buckets
+        for b in buckets:
+            await _write_to_bucket(
+                dp, result if i >= warmup else None,
+                b, aid, ts_val, tracker, fe, forecasts_by_horizon,
+                total_forecasts, total_evals,
+            )
+
+        if result and i >= warmup:
             asyncio.create_task(tracker.compare_actual_async(
                 agent_id=aid, timestamp=ts_val, raw_metrics=result.raw_metrics))
 
@@ -557,7 +576,7 @@ async def main(
             pct = (i + 1) * 100 // total
             rate = (i + 1) / elapsed if elapsed > 0 else 0
             eta = (total - i - 1) / rate if rate > 0 else 0
-            log.info(f"  {i+1}/{total} ({pct}%) — {rate:.1f} slots/s, ETA {eta:.0f}s — forecasts: {total_forecasts}, evals: {total_evals}")
+            log.info(f"  {i+1}/{total} ({pct}%) — {rate:.1f} slots/s, ETA {eta:.0f}s — forecasts: {total_forecasts[0]}, evals: {total_evals[0]}")
             await asyncio.sleep(0)
 
     # Flush
@@ -569,7 +588,7 @@ async def main(
 
     elapsed = _time.time() - t0
     log.info(f"Done! {total} slots in {elapsed:.0f}s ({total/elapsed:.1f} slots/s)")
-    log.info(f"  Forecasts: {total_forecasts}, Evaluations: {total_evals}")
+    log.info(f"  Forecasts: {total_forecasts[0]}, Evaluations: {total_evals[0]}")
     log.info(f"  {data_points[0]['Timestamp']} → {data_points[-1]['Timestamp']}")
 
     detector.shutdown()
@@ -590,15 +609,16 @@ async def main(
 @click.option("--region-name", default="2부문")
 @click.option("--seed", default=42, type=int)
 @click.option("--workers", default=5, type=int, help="ARIMA parallel workers (default: 5)")
+@click.option("--also-bucket", default="", help="Also write to this bucket (e.g. sample_metrics)")
 def cli(file_path, interval_min, hours, agent_id, bucket, start_after,
-        store_code, store_name, pos_no, region_code, region_name, seed, workers):
+        store_code, store_name, pos_no, region_code, region_name, seed, workers, also_bucket):
     """Parallel historical generator: ARIMA runs in thread pool for speed."""
     asyncio.run(main(
         file_path=file_path, interval_min=interval_min, hours=hours,
         agent_id=agent_id, bucket=bucket, start_after=start_after,
         store_code=store_code, store_name=store_name, pos_no=pos_no,
         region_code=region_code, region_name=region_name,
-        seed=seed, workers=workers,
+        seed=seed, workers=workers, also_bucket=also_bucket,
     ))
 
 
