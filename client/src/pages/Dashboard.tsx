@@ -30,6 +30,14 @@ interface InfluxDetection {
 
 type ViewMode = 'db' | 'realtime';
 
+const METRIC_KO: Record<string, string> = {
+  Dongle: '동글', HandScanner: '핸드스캐너', '2DScanner': '2D스캐너',
+  PassportReader: '여권리더기', PhoneCharger: '충전기', Keyboard: '키보드', MSR: 'MSR',
+  CPU: 'CPU', Memory: '메모리', DiskIO: '디스크IO',
+  NetworkSent: '네트워크 송신', NetworkRecv: '네트워크 수신',
+  Process: '프로세스', POS_Idle: 'POS 유휴', Multivariate: '종합',
+};
+
 const MODE_CONFIG = {
   db:       { metricsLimit: 100, detectionsLimit: 200, pollInterval: 5_000 },
   realtime: { metricsLimit: 100, detectionsLimit: 200, pollInterval: 2_000 },
@@ -464,27 +472,37 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {allDetections.map((d) => (
+                {allDetections.map((d) => {
+                  const isPeriph = PERIPHERAL_METRICS.has(d.metric) && d.engine === 'ecod';
+                  return (
                   <tr key={`${d.timestamp}-${d.engine}-${d.metric}`} style={{ borderBottom: '1px solid #1e293b', animation: 'fadeSlideIn 0.3s ease' }}>
                     <td style={{ padding: '8px 10px' }}>
                       {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : '-'}
                     </td>
-                    <td style={{ padding: '8px 10px' }}><EngineTag engine={d.engine} /></td>
-                    <td style={{ padding: '8px 10px' }}>{d.metric}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{d.score?.toFixed(3)}</td>
-                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                      {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
-                    </td>
-                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                      {PERIPHERAL_METRICS.has(d.metric) && d.engine === 'ecod'
-                        ? <PeripheralStatusTag value={d.actual_value} />
-                        : <SeverityTag severity={d.severity} />}
-                    </td>
-                    <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
-                      {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
-                    </td>
+                    <td style={{ padding: '8px 10px' }}>{isPeriph ? <EngineTag engine="peripheral" /> : <EngineTag engine={d.engine} />}</td>
+                    <td style={{ padding: '8px 10px' }}>{METRIC_KO[d.metric] || d.metric}</td>
+                    {isPeriph ? (
+                      <>
+                        <td colSpan={2} style={{ padding: '8px 10px', textAlign: 'center' }}><PeripheralStatusTag value={d.actual_value} /></td>
+                        <td colSpan={2} style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
+                          {d.actual_value === 1 ? '정상 연결' : d.actual_value === 0 ? '연결 끊김' : '장치 미사용'}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{d.score?.toFixed(3)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                          {d.confidence ? `${(d.confidence * 100).toFixed(0)}%` : '-'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'center' }}><SeverityTag severity={d.severity} /></td>
+                        <td style={{ padding: '8px 10px', color: '#cbd5e1', fontSize: '11px' }}>
+                          {d.details || (d.arima_predicted ? `예측: ${d.arima_predicted?.toFixed(1)}` : '-')}
+                        </td>
+                      </>
+                    )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
