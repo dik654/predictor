@@ -1359,26 +1359,36 @@ def get_last_metric_time(
     agent_id: str,
     bucket: str | None = None,
 ) -> str | None:
-    """Query the last metric timestamp for an agent. Returns ISO string or None."""
+    """Query the earliest 'last' timestamp across metrics and peripheral_status.
+    Returns the earlier of the two so resume fills all gaps."""
     target_bucket = bucket if bucket is not None else INFLUX_BUCKET
     if not client:
         return None
-    try:
-        query = f'''
-        from(bucket: "{target_bucket}")
-          |> range(start: -30d)
-          |> filter(fn: (r) => r._measurement == "metrics")
-          |> filter(fn: (r) => r.agent_id == "{agent_id}")
-          |> filter(fn: (r) => r._field == "cpu")
-          |> last()
-        '''
-        tables = client.query_api().query(query)
-        for table in tables:
-            for record in table.records:
-                return str(record.get_time())
-    except Exception as e:
-        log.warning(f"Failed to query last metric time: {e}")
-    return None
+
+    timestamps = []
+    for measurement, field in [("metrics", "cpu"), ("peripheral_status", "dongle")]:
+        try:
+            query = f'''
+            from(bucket: "{target_bucket}")
+              |> range(start: -30d)
+              |> filter(fn: (r) => r._measurement == "{measurement}")
+              |> filter(fn: (r) => r.agent_id == "{agent_id}")
+              |> filter(fn: (r) => r._field == "{field}")
+              |> last()
+            '''
+            tables = client.query_api().query(query)
+            for table in tables:
+                for record in table.records:
+                    timestamps.append(str(record.get_time()))
+        except Exception as e:
+            log.warning(f"Failed to query last {measurement} time: {e}")
+
+    if not timestamps:
+        return None
+    # Return the earliest so no measurement has gaps
+    timestamps.sort()
+    log.info(f"Resume timestamps — metrics: {timestamps}")
+    return timestamps[0]
 
 
 def close_influx():
