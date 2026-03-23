@@ -41,6 +41,11 @@ export function Dashboard() {
   const [arimaMetric, setArimaMetric] = useState<string>('CPU');
   const [ecodGroup, setEcodGroup] = useState<'all' | 'system' | 'peripheral' | 'status'>('all');
   const [historyEngine, setHistoryEngine] = useState<'all' | 'ecod' | 'arima' | 'peripheral'>('all');
+  const historyRef = useRef<HTMLDivElement>(null);
+  const scrollToHistory = (engine: 'ecod' | 'arima' | 'peripheral') => {
+    setHistoryEngine(engine);
+    setTimeout(() => historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
 
   const [dbMetrics, setDbMetrics] = useState<InfluxMetric[]>([]);
   const [dbDetections, setDbDetections] = useState<InfluxDetection[]>([]);
@@ -117,13 +122,18 @@ export function Dashboard() {
   const ecodKeyboard = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'Keyboard').slice(-CHART_POINTS);
   const ecodMsr = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'MSR').slice(-CHART_POINTS);
   const ecodIdle = dbDetections.filter(d => d.engine === 'ecod' && d.metric === 'POS_Idle').slice(-CHART_POINTS);
+  const PERIPHERAL_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR']);
   const ecodData = dbDetections.filter(d => d.engine === 'ecod').slice(-100);
   const arimaData = dbDetections.filter(d => d.engine === 'arima').slice(-50);
-  const peripheralAlerts = dbDetections.filter(d => d.engine === 'peripheral').slice(-20);
+  const peripheralAlerts = dbDetections.filter(d =>
+    d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric) && (d.severity === 'warning' || d.severity === 'critical'))
+  ).slice(-50);
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
   const latestDetections = dbDetections.slice(-30);
-  const filteredDetections = historyEngine === 'all' ? dbDetections : dbDetections.filter(d => d.engine === historyEngine);
+  const filteredDetections = historyEngine === 'all' ? dbDetections
+    : historyEngine === 'peripheral' ? dbDetections.filter(d => d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric)))
+    : dbDetections.filter(d => d.engine === historyEngine);
   const allDetections = filteredDetections.slice(-50).reverse();
   const ecodWarnings = ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical');
   const arimaWarnings = arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical');
@@ -221,9 +231,13 @@ export function Dashboard() {
   // 잔차 영역: 두 라인 사이 band = lower(투명) + bandWidth(색상)
   const bandWidth = selectedArimaData.map(d => Math.abs(d.arima_deviation || 0));
 
-  // 상단/하단 동일 범위 (같은 y축 스케일)
-  const allValues = [...arimaActual.filter((v): v is number => v != null), ...selectedArimaData.map(d => d.arima_predicted ?? 0), ...bandWidth];
-  const sharedMax = Math.ceil(Math.max(30, ...allValues) * 1.1);
+  // 상단 차트: 예측/실제 스케일
+  const mainValues = [...arimaActual.filter((v): v is number => v != null), ...selectedArimaData.map(d => d.arima_predicted ?? 0)];
+  const sharedMax = Math.ceil(Math.max(30, ...mainValues) * 1.1);
+  // 하단 잔차 차트: 잔차 + 임계값 기준 스케일
+  const arimaThresholds = selectedArimaData.map(d => d.threshold || 0);
+  const residualMax = Math.ceil(Math.max(1, ...bandWidth, ...arimaThresholds.map(t => t * 1.8)) * 1.1);
+  const avgThreshold = arimaThresholds.length > 0 ? arimaThresholds.reduce((a, b) => a + b, 0) / arimaThresholds.length : 0;
 
   const arimaChartOption = {
     title: { text: `AutoARIMA 예측 vs 실제 (${arimaMetric})`, left: 'center', textStyle: { fontSize: 13, fontWeight: 500, color: '#cbd5e1' } },
@@ -239,7 +253,7 @@ export function Dashboard() {
     ],
     yAxis: [
       { type: 'value', gridIndex: 0, name: arimaMetric, min: 0, max: sharedMax, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
-      { type: 'value', gridIndex: 1, name: '잔차', min: 0, max: sharedMax, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
+      { type: 'value', gridIndex: 1, name: '잔차', min: 0, max: residualMax, axisLabel: { color: '#64748b', fontSize: 10 }, nameTextStyle: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     ],
     series: [
       // Custom series: fill area between actual and predicted
@@ -267,10 +281,18 @@ export function Dashboard() {
         color: 'rgba(59, 130, 246, 0.5)',
         itemStyle: { color: (params: any) => {
           const v = params.value || 0;
-          if (v > 20) return 'rgba(239, 68, 68, 0.8)';
-          if (v > 10) return 'rgba(251, 191, 36, 0.7)';
+          const th = selectedArimaData[params.dataIndex]?.threshold || 1;
+          if (v > th * 1.5) return 'rgba(239, 68, 68, 0.8)';
+          if (v > th) return 'rgba(251, 191, 36, 0.7)';
           return 'rgba(59, 130, 246, 0.5)';
         }, borderRadius: [2, 2, 0, 0] },
+        markLine: avgThreshold > 0 ? {
+          silent: true, symbol: 'none',
+          data: [
+            { yAxis: avgThreshold, lineStyle: { color: '#fbbf24', type: 'dashed', width: 1 }, label: { show: true, position: 'insideEndTop', formatter: '경고', color: '#fbbf24', fontSize: 10 } },
+            { yAxis: avgThreshold * 1.5, lineStyle: { color: '#ef4444', type: 'dashed', width: 1 }, label: { show: true, position: 'insideEndTop', formatter: '위험', color: '#ef4444', fontSize: 10 } },
+          ],
+        } : undefined,
       },
     ],
   };
@@ -319,17 +341,17 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`${metricsCount}개 시점의 연속값 (CPU·메모리·디스크IO·네트워크송수신) — 주변장치 상태는 탐지 엔진에서 별도 처리`} />
-        <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => setHistoryEngine('ecod')}
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`InfluxDB에 저장된 최근 ${metricsCount}개 시점 (CPU·메모리·디스크IO·네트워크)`} />
+        <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => scrollToHistory('ecod')}
           desc={ecodWarnings.length > 0
-            ? `최근 ${ecodData.length}건 중 ${ecodWarnings.length}건 경고 — ${ecodSummary} (클릭→히스토리 필터)`
+            ? `최근 ${ecodData.length}건 중 ${ecodWarnings.length}건 경고 — ${ecodSummary}`
             : `최근 ${ecodData.length}건 분석 — 이상 없음`} />
-        <StatCard title="ARIMA 예측 경고" value={arimaWarnings.length} color="#8b5cf6" icon={<TrendingUp size={14} />} onClick={() => setHistoryEngine('arima')}
+        <StatCard title="ARIMA 예측 경고" value={arimaWarnings.length} color="#8b5cf6" icon={<TrendingUp size={14} />} onClick={() => scrollToHistory('arima')}
           desc={arimaWarnings.length > 0
-            ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')} (클릭→히스토리 필터)`
+            ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `최근 ${arimaData.length}건 — 경고 없음`} />
-        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => setHistoryEngine('peripheral')}
-          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')} (클릭→히스토리 필터)` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
+        <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
+          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')}` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -384,7 +406,7 @@ export function Dashboard() {
       </div>
 
       {/* Detection Table */}
-      <div style={{ ...card, padding: '16px', marginTop: '12px' }}>
+      <div ref={historyRef} style={{ ...card, padding: '16px', marginTop: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <h3 style={{ margin: 0, fontSize: '16px' }}>
             탐지 히스토리 ({viewMode === 'realtime' ? '실시간' : 'DB 전체'})
