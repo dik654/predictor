@@ -411,8 +411,11 @@ class ForecastEvaluator:
             cpu = preds.get("cpu") or float(train_medians[0])
             mem = preds.get("memory") or float(train_medians[1])
             disk = preds.get("disk_io") or float(train_medians[2])
-            net_sent = preds.get("network_sent") or float(train_medians[3])
-            net_recv = preds.get("network_recv") or float(train_medians[4])
+            # 네트워크: 100 이하는 옛 clamp 버그 → 중앙값 사용
+            raw_ns = preds.get("network_sent", 0)
+            net_sent = float(train_medians[3]) if not raw_ns or raw_ns <= 100 else raw_ns
+            raw_nr = preds.get("network_recv", 0)
+            net_recv = float(train_medians[4]) if not raw_nr or raw_nr <= 100 else raw_nr
 
             # 14차원 벡터: ARIMA 예측(연속) + 현재 상태(이산) + 유휴 여부
             feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
