@@ -71,10 +71,10 @@ class HistoricalDetector(EnhancedAnomalyDetector):
 
         # For historical data, use more lenient minimums
         # Adjust based on total dataset size
-        if config.total_slots < 10:
+        if total_slots < 10:
             self.min_samples_arima = 3
             self.min_samples_ecod = 2
-        elif config.total_slots < 30:
+        elif total_slots < 30:
             self.min_samples_arima = 5
             self.min_samples_ecod = 3
         else:
@@ -306,12 +306,287 @@ def load_and_aggregate_sample(file_path: Path, interval_min: int) -> List[dict]:
     return aggregated
 
 
-def build_time_slots(config: HistoricalConfig) -> List[datetime]:
+def load_from_influxdb(agent_id: str, bucket: str, hours: int = 72) -> List[dict]:
     """
-    Generate target time slots from (now - hours) to now.
+    Load raw metrics from InfluxDB as base pattern data.
+
+    Returns:
+        List of dicts with keys: ts, CPU, Memory, DiskIO, Network:{Sent,Recv}
+    """
+    from influxdb_client import InfluxDBClient
+    from . import influx_writer as iw
+
+    log.info(f"Loading from InfluxDB: agent={agent_id}, bucket={bucket}, range={hours}h")
+    ic = InfluxDBClient(url=iw.INFLUX_URL, token=iw.INFLUX_TOKEN, org=iw.INFLUX_ORG)
+    query_api = ic.query_api()
+
+    query = f'''
+    from(bucket: "{bucket}")
+      |> range(start: -{hours}h)
+      |> filter(fn: (r) => r._measurement == "metrics")
+      |> filter(fn: (r) => r.agent_id == "{agent_id}")
+      |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
+          or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
+      |> sort(columns: ["_time"], desc: false)
+    '''
+
+    records_map = {}
+    tables = query_api.query(query)
+    for table in tables:
+        for record in table.records:
+            ts = record.get_time()
+            field = record.get_field()
+            value = record.get_value()
+            if ts not in records_map:
+                records_map[ts] = {"ts": ts, "CPU": 0, "Memory": 0, "DiskIO": 0,
+                                   "Network": {"Sent": 0, "Recv": 0}}
+            if value is None:
+                continue
+            if field == "cpu":
+                records_map[ts]["CPU"] = float(value)
+            elif field == "memory":
+                records_map[ts]["Memory"] = float(value)
+            elif field == "disk_io":
+                records_map[ts]["DiskIO"] = float(value)
+            elif field == "network_sent_bytes":
+                records_map[ts]["Network"]["Sent"] = int(value)
+            elif field == "network_received_bytes":
+                records_map[ts]["Network"]["Recv"] = int(value)
+
+    ic.close()
+    result = sorted(records_map.values(), key=lambda x: x["ts"])
+    log.info(f"Loaded {len(result)} records from InfluxDB")
+    return result
+
+
+# ── Time-of-day profiles ─────────────────────────────────────────────────────
+# Multiplier applied to base metrics per hour-of-day (KST).
+# 0=midnight, 6=early morning, 9=open, 22=close
+_HOUR_PROFILE = {
+    #  hour: (cpu_mult, net_mult)
+    0: (0.20, 0.05), 1: (0.15, 0.03), 2: (0.15, 0.02), 3: (0.15, 0.02),
+    4: (0.18, 0.03), 5: (0.25, 0.05), 6: (0.40, 0.15), 7: (0.55, 0.25),
+    8: (0.70, 0.40), 9: (0.85, 0.60), 10: (0.95, 0.80), 11: (1.00, 0.90),
+    12: (1.10, 1.00), 13: (1.05, 0.95), 14: (0.95, 0.85), 15: (0.90, 0.80),
+    16: (0.90, 0.80), 17: (0.95, 0.85), 18: (1.05, 0.95), 19: (1.00, 0.90),
+    20: (0.90, 0.80), 21: (0.75, 0.60), 22: (0.50, 0.30), 23: (0.30, 0.10),
+}
+
+
+def _apply_time_profile(base: dict, ts: datetime, rng: np.random.Generator) -> dict:
+    """
+    Apply time-of-day variation + random noise to a base data point.
+
+    Args:
+        base: Base data dict with CPU, Memory, DiskIO, Network
+        ts: Target timestamp (assumed KST or local)
+        rng: numpy random generator for reproducibility
+    """
+    hour = ts.hour
+    cpu_m, net_m = _HOUR_PROFILE.get(hour, (0.8, 0.5))
+
+    # Base values
+    cpu_base = base["CPU"]
+    mem_base = base["Memory"]
+    disk_base = base["DiskIO"]
+    net_sent = base["Network"]["Sent"]
+    net_recv = base["Network"]["Recv"]
+
+    # Apply multiplier + noise
+    cpu = cpu_base * cpu_m + rng.normal(0, cpu_base * 0.08)
+    cpu = float(np.clip(cpu, 1.0, 100.0))
+
+    # Memory is sticky — slow drift, not multiplied
+    mem = mem_base + rng.normal(0, 1.5)
+    mem = float(np.clip(mem, 30.0, 98.0))
+
+    disk = disk_base * cpu_m + rng.normal(0, max(disk_base * 0.1, 0.01))
+    disk = float(np.clip(disk, 0.0, 100.0))
+
+    sent = int(max(0, net_sent * net_m + rng.normal(0, max(net_sent * 0.15, 10))))
+    recv = int(max(0, net_recv * net_m + rng.normal(0, max(net_recv * 0.15, 10))))
+
+    return {
+        "CPU": round(cpu, 1),
+        "Memory": round(mem, 1),
+        "DiskIO": round(disk, 2),
+        "Network": {"Sent": sent, "Recv": recv},
+    }
+
+
+# ── Event injection ──────────────────────────────────────────────────────────
+
+def _inject_events(data_points: List[dict], rng: np.random.Generator) -> int:
+    """
+    Inject realistic anomaly events into the data stream.
+
+    Events:
+      - CPU spike (short burst, 2-5 points)
+      - Memory gradual rise (20-40 points, ~3-7 hours at 10min interval)
+      - Network surge (3-8 points)
+      - Idle period (CPU/Network drop to near-zero, 6-12 points)
+
+    Returns number of events injected.
+    """
+    n = len(data_points)
+    if n < 50:
+        return 0
+
+    events_injected = 0
+
+    # Roughly 1 event per 6 hours of data
+    # At 10min interval: 6h = 36 slots
+    num_events = max(1, n // 36)
+    num_events = min(num_events, 8)  # cap
+
+    event_types = ["cpu_spike", "memory_rise", "network_surge", "idle_period"]
+
+    for _ in range(num_events):
+        etype = rng.choice(event_types)
+        start = rng.integers(10, max(11, n - 50))
+
+        if etype == "cpu_spike":
+            duration = rng.integers(2, 6)
+            peak = rng.uniform(70, 95)
+            for j in range(duration):
+                idx = start + j
+                if idx >= n:
+                    break
+                dp = data_points[idx]
+                # Bell curve shape
+                t = j / max(duration - 1, 1)
+                factor = np.sin(t * np.pi)
+                dp["CPU"] = round(float(np.clip(dp["CPU"] + (peak - dp["CPU"]) * factor, 0, 100)), 1)
+                dp["DiskIO"] = round(float(np.clip(dp["DiskIO"] * (1 + factor * 2), 0, 100)), 2)
+            events_injected += 1
+
+        elif etype == "memory_rise":
+            duration = rng.integers(20, 40)
+            target = rng.uniform(85, 96)
+            for j in range(duration):
+                idx = start + j
+                if idx >= n:
+                    break
+                dp = data_points[idx]
+                progress = j / max(duration - 1, 1)
+                dp["Memory"] = round(float(np.clip(
+                    dp["Memory"] + (target - dp["Memory"]) * progress, 30, 98
+                )), 1)
+            events_injected += 1
+
+        elif etype == "network_surge":
+            duration = rng.integers(3, 9)
+            multiplier = rng.uniform(5, 20)
+            for j in range(duration):
+                idx = start + j
+                if idx >= n:
+                    break
+                dp = data_points[idx]
+                dp["Network"]["Sent"] = int(dp["Network"]["Sent"] * multiplier)
+                dp["Network"]["Recv"] = int(dp["Network"]["Recv"] * multiplier)
+            events_injected += 1
+
+        elif etype == "idle_period":
+            duration = rng.integers(6, 13)
+            for j in range(duration):
+                idx = start + j
+                if idx >= n:
+                    break
+                dp = data_points[idx]
+                dp["CPU"] = round(float(rng.uniform(1.0, 3.0)), 1)
+                dp["DiskIO"] = round(float(rng.uniform(0.0, 0.05)), 2)
+                dp["Network"]["Sent"] = int(rng.uniform(0, 20))
+                dp["Network"]["Recv"] = int(rng.uniform(0, 10))
+            events_injected += 1
+
+    return events_injected
+
+
+def synthesize_data(
+    base_records: List[dict],
+    slots: List[datetime],
+    agent_id: str,
+    config: "HistoricalConfig",
+    seed: int = 42,
+) -> List[dict]:
+    """
+    Generate realistic synthetic data by applying time-of-day profiles,
+    noise, and event injection to base pattern records.
+
+    The first BLEND_WINDOW points smoothly transition from the last base record
+    to the synthesized values, ensuring continuity with existing data.
+
+    Args:
+        base_records: Source records (from file or InfluxDB)
+        slots: Target time slots to fill
+        agent_id: Agent ID
+        config: Historical configuration
+        seed: Random seed for reproducibility
+
+    Returns:
+        List of data points ready for detection and InfluxDB write
+    """
+    rng = np.random.default_rng(seed)
+    BLEND_WINDOW = min(6, len(slots))  # ~1 hour at 10min interval
+
+    # Last known values for smooth transition
+    last_rec = base_records[-1]
+    prev_cpu = last_rec["CPU"]
+    prev_mem = last_rec["Memory"]
+    prev_disk = last_rec["DiskIO"]
+    prev_sent = last_rec["Network"]["Sent"]
+    prev_recv = last_rec["Network"]["Recv"]
+
+    data_points = []
+    for i, ts in enumerate(slots):
+        base = base_records[i % len(base_records)]
+        varied = _apply_time_profile(base, ts, rng)
+
+        # Smooth blend: first few points transition from last real data
+        if i < BLEND_WINDOW:
+            alpha = i / BLEND_WINDOW  # 0 → 1
+            varied["CPU"] = round(prev_cpu * (1 - alpha) + varied["CPU"] * alpha, 1)
+            varied["Memory"] = round(prev_mem * (1 - alpha) + varied["Memory"] * alpha, 1)
+            varied["DiskIO"] = round(prev_disk * (1 - alpha) + varied["DiskIO"] * alpha, 2)
+            varied["Network"]["Sent"] = int(prev_sent * (1 - alpha) + varied["Network"]["Sent"] * alpha)
+            varied["Network"]["Recv"] = int(prev_recv * (1 - alpha) + varied["Network"]["Recv"] * alpha)
+
+        data_points.append({
+            "AgentId": agent_id,
+            "Timestamp": ts.isoformat() + "Z",
+            "CPU": varied["CPU"],
+            "Memory": varied["Memory"],
+            "DiskIO": varied["DiskIO"],
+            "Network": varied["Network"],
+            "StoreInfo": {
+                "StoreCode": config.store_code,
+                "StoreName": config.store_name,
+                "PosNo": config.pos_no,
+                "RegionCode": config.region_code,
+                "RegionName": config.region_name,
+            },
+            "_slot_index": i,
+            "_nanos_offset": 0,
+        })
+
+    # Inject anomaly events (skip blend window)
+    num_events = _inject_events(data_points, rng)
+    log.info(f"Synthesized {len(data_points)} points from {len(base_records)} base records, "
+             f"{num_events} events injected, blend={BLEND_WINDOW} points")
+
+    return data_points
+
+
+def build_time_slots(config: HistoricalConfig, start_after: Optional[datetime] = None) -> List[datetime]:
+    """
+    Generate target time slots.
+
+    If start_after is given, generates slots from start_after to now.
+    Otherwise, generates from (now - hours) to now.
 
     Args:
         config: Historical configuration
+        start_after: If set, fill from this time to now (ignores config.hours)
 
     Returns:
         List of datetime objects
@@ -322,14 +597,20 @@ def build_time_slots(config: HistoricalConfig) -> List[datetime]:
     minutes_to_floor = now.minute % config.interval_min
     now = now - timedelta(minutes=minutes_to_floor)
 
-    # Start time: shift start back by one interval so that the last slot == now
-    start = now - timedelta(hours=config.hours)
+    if start_after:
+        # Floor start_after to interval boundary
+        start = start_after.replace(second=0, microsecond=0)
+        sa_floor = start.minute % config.interval_min
+        start = start - timedelta(minutes=sa_floor) + timedelta(minutes=config.interval_min)
+    else:
+        start = now - timedelta(hours=config.hours)
 
-    # Generate slots: total_slots + 1 so the last slot is exactly 'now'
+    # Generate slots from start to now
     slots = []
-    for i in range(config.total_slots + 1):
-        ts = start + timedelta(minutes=i * config.interval_min)
+    ts = start
+    while ts <= now:
         slots.append(ts)
+        ts += timedelta(minutes=config.interval_min)
 
     log.info(f"Generated {len(slots)} time slots from {slots[0]} to {slots[-1]}")
     return slots
@@ -464,17 +745,23 @@ async def main(
     pos_no: str = "3",
     region_code: str = "16",
     region_name: str = "2부문",
+    from_influx: bool = False,
+    start_after: str = "",
+    seed: int = 42,
 ):
     """
     Generate historical data and forecasts.
 
     Args:
-        file_path: Path to sample data file
+        file_path: Path to sample data file (ignored if from_influx=True)
         interval_min: Time interval in minutes
-        hours: Total hours of data to generate
+        hours: Total hours of data to generate (ignored if start_after is set)
         agent_id: Agent ID
         bucket: InfluxDB bucket
         horizons: Comma-separated forecast horizons in minutes
+        from_influx: Load base data from InfluxDB instead of file
+        start_after: ISO datetime string — fill from this time to now (e.g. "2026-03-20T18:50:00")
+        seed: Random seed for reproducibility
     """
     # Parse horizons
     horizons_min = [int(h.strip()) for h in horizons.split(",")]
@@ -493,40 +780,101 @@ async def main(
         region_name=region_name,
     )
 
+    # Parse start_after
+    start_after_dt: Optional[datetime] = None
+    if start_after:
+        try:
+            start_after_dt = datetime.fromisoformat(start_after.rstrip("Z"))
+        except ValueError:
+            log.error(f"Invalid --start-after format: {start_after}. Use ISO format like 2026-03-20T18:50:00")
+            return
+
     log.info(f"Historical Data Generator")
     log.info(f"  Interval: {config.interval_min} min")
-    log.info(f"  Range: {config.hours} hours ({config.total_slots} slots)")
+    log.info(f"  Source: {'InfluxDB' if from_influx else file_path}")
+    if start_after_dt:
+        log.info(f"  Range: {start_after_dt} → now")
+    else:
+        log.info(f"  Range: {config.hours} hours ({total_slots} slots)")
     log.info(f"  Agent: {config.agent_id}")
     log.info(f"  Bucket: {config.bucket}")
     log.info(f"  Horizons: {config.horizons_min} minutes")
+    log.info(f"  Seed: {seed}")
 
     try:
-        # Load and aggregate sample data
-        windows = load_and_aggregate_sample(Path(file_path), config.interval_min)
+        # Load base data — combine file + InfluxDB for richer patterns
+        windows = []
+
+        # Source 1: InfluxDB real data
+        if from_influx:
+            base_records = load_from_influxdb(agent_id, bucket, hours=72)
+            if base_records:
+                # Auto-detect start_after from last record if not explicitly set
+                if not start_after_dt:
+                    last_ts = base_records[-1]["ts"]
+                    if hasattr(last_ts, 'tzinfo') and last_ts.tzinfo:
+                        start_after_dt = last_ts.replace(tzinfo=None)
+                    else:
+                        start_after_dt = last_ts
+                    log.info(f"Auto-detected last data at {start_after_dt}, will fill from there")
+                for rec in base_records:
+                    windows.append({
+                        "CPU": rec["CPU"], "Memory": rec["Memory"],
+                        "DiskIO": rec["DiskIO"], "Network": rec["Network"],
+                    })
+                log.info(f"Loaded {len(base_records)} records from InfluxDB")
+            else:
+                log.warning("No data in InfluxDB, falling back to file only")
+
+        # Source 2: Sample file (always load if exists, to enrich pattern pool)
+        file_windows = []
+        sample_path = Path(file_path)
+        if sample_path.exists():
+            file_windows = load_and_aggregate_sample(sample_path, config.interval_min)
+            log.info(f"Loaded {len(file_windows)} windows from {file_path}")
+
+        # Merge: interleave file and influx data for pattern diversity
+        if windows and file_windows:
+            # Shuffle-merge: alternate between sources
+            merged = []
+            max_len = max(len(windows), len(file_windows))
+            for i in range(max_len):
+                if i < len(windows):
+                    merged.append(windows[i])
+                if i < len(file_windows):
+                    merged.append(file_windows[i])
+            windows = merged
+            log.info(f"Merged {len(windows)} total base patterns (InfluxDB + file)")
+        elif file_windows:
+            windows = file_windows
+
         if not windows:
-            log.error("No data loaded!")
+            log.error("No data loaded from any source!")
             return
 
         # Create detector and tracker
         detector = HistoricalDetector(config)
         tracker = PredictTracker(retention_hours=max(config.horizons_min) // 60 * 3)
 
-        # Calculate actual warmup
-        if config.total_slots < 20:
-            actual_warmup = min(3, max(1, config.total_slots // 6))
-        else:
-            actual_warmup = min(config.warmup_slots, max(5, config.total_slots // 3))
-        log.info(f"Warmup period: {actual_warmup} slots (out of {config.total_slots})")
+        # Build time slots
+        placeholder_slots = build_time_slots(config, start_after=start_after_dt)
+        total_slots = len(placeholder_slots)
 
-        # Use placeholder slots for ARIMA buffer accumulation (relative offsets only)
-        placeholder_slots = build_time_slots(config)
-        data_points = map_data_to_slots(windows, placeholder_slots, config.agent_id, config)
+        # Calculate actual warmup
+        if total_slots < 20:
+            actual_warmup = min(3, max(1, total_slots // 6))
+        else:
+            actual_warmup = min(config.warmup_slots, max(5, total_slots // 3))
+        log.info(f"Warmup period: {actual_warmup} slots (out of {total_slots})")
+
+        # Generate data: synthesize with time-of-day variation + events
+        data_points = synthesize_data(windows, placeholder_slots, config.agent_id, config, seed=seed)
 
         # PASS 1: Run all ARIMA/ECOD in memory — no InfluxDB writes yet.
         # This separates CPU-intensive ML work from timestamp assignment so that
         # we can recompute "now" after processing completes, minimising the gap
         # between the last historical slot and live data.
-        log.info(f"Pass 1/2: ARIMA/ECOD detection ({config.total_slots} slots)...")
+        log.info(f"Pass 1/2: ARIMA/ECOD detection ({total_slots} slots)...")
         detection_results = []
         for i, data_point in enumerate(data_points):
             try:
@@ -539,15 +887,18 @@ async def main(
                 log.error(f"Detection error for slot {i}: {e}")
                 detection_results.append(None)
 
-            if (i + 1) % max(1, config.total_slots // 10) == 0:
-                pct = (i + 1) * 100 // config.total_slots
-                log.info(f"  {i+1}/{config.total_slots} ({pct}%)")
+            if (i + 1) % max(1, total_slots // 10) == 0:
+                pct = (i + 1) * 100 // total_slots
+                log.info(f"  {i+1}/{total_slots} ({pct}%)")
 
         # Recompute fresh timestamps NOW — after all ML work is done.
         # The gap between the last slot and live data is now just InfluxDB write time.
-        fresh_slots = build_time_slots(config)
-        for i, data_point in enumerate(data_points):
-            data_point["Timestamp"] = fresh_slots[i].isoformat() + "Z"
+        if not start_after_dt:
+            # Only recompute timestamps if not filling a specific gap
+            fresh_slots = build_time_slots(config)
+            for i, data_point in enumerate(data_points):
+                if i < len(fresh_slots):
+                    data_point["Timestamp"] = fresh_slots[i].isoformat() + "Z"
         log.info(f"Timestamps refreshed: {fresh_slots[0]} → {fresh_slots[-1]}")
 
         # Connect to InfluxDB right before writing (avoids idle-timeout disconnect during Pass 1)
@@ -660,9 +1011,9 @@ async def main(
                     raw_metrics=result.raw_metrics,
                 ))
 
-            if (i + 1) % max(1, config.total_slots // 10) == 0:
-                pct = (i + 1) * 100 // config.total_slots
-                log.info(f"  {i+1}/{config.total_slots} ({pct}%) — forecasts: {total_forecasts}, evaluations: {total_evaluations}")
+            if (i + 1) % max(1, total_slots // 10) == 0:
+                pct = (i + 1) * 100 // total_slots
+                log.info(f"  {i+1}/{total_slots} ({pct}%) — forecasts: {total_forecasts}, evaluations: {total_evaluations}")
                 await asyncio.sleep(0)  # yield to let pending accuracy tasks run
 
         # Wait for all pending accuracy writes to complete before closing connection
@@ -672,8 +1023,10 @@ async def main(
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
+        first_ts = data_points[0]["Timestamp"] if data_points else "?"
+        last_ts = data_points[-1]["Timestamp"] if data_points else "?"
         log.info(f"✓ Complete! Forecasts: {total_forecasts}, Evaluations: {total_evaluations}")
-        log.info(f"  Data spans from {fresh_slots[0]} to {fresh_slots[-1]}")
+        log.info(f"  Data spans from {first_ts} to {last_ts}")
 
     except Exception as e:
         log.error(f"Failed: {e}", exc_info=True)
@@ -686,11 +1039,11 @@ async def main(
 
 @click.command()
 @click.option("--file", "sample_file", default="sample/data_pos.txt",
-              help="Path to sample data file")
+              help="Path to sample data file (ignored if --from-influx)")
 @click.option("--interval-min", default=10, type=int,
               help="Time interval in minutes (default: 10)")
 @click.option("--hours", default=96, type=int,
-              help="Total hours of data (default: 96 = 4 days)")
+              help="Total hours of data (default: 96, ignored if --start-after)")
 @click.option("--agent-id", default="V135-POS-03",
               help="Agent ID (default: V135-POS-03)")
 @click.option("--bucket", default="pos_metrics",
@@ -702,9 +1055,16 @@ async def main(
 @click.option("--pos-no", default="3", help="POS number (default: 3)")
 @click.option("--region-code", default="16", help="Region code (default: 16)")
 @click.option("--region-name", default="2부문", help="Region name")
+@click.option("--from-influx", is_flag=True, default=False,
+              help="Load base data from InfluxDB instead of file")
+@click.option("--start-after", default="",
+              help="Fill data from this time to now (ISO format, e.g. 2026-03-20T18:50:00)")
+@click.option("--seed", default=42, type=int,
+              help="Random seed for reproducibility (default: 42)")
 def cli(sample_file, interval_min, hours, agent_id, bucket, horizons,
-        store_code, store_name, pos_no, region_code, region_name):
-    """Generate historical metrics and forecasts."""
+        store_code, store_name, pos_no, region_code, region_name,
+        from_influx, start_after, seed):
+    """Generate historical metrics and forecasts with realistic time-of-day variation."""
     asyncio.run(main(
         file_path=sample_file,
         interval_min=interval_min,
@@ -717,6 +1077,9 @@ def cli(sample_file, interval_min, hours, agent_id, bucket, horizons,
         pos_no=pos_no,
         region_code=region_code,
         region_name=region_name,
+        from_influx=from_influx,
+        start_after=start_after,
+        seed=seed,
     ))
 
 

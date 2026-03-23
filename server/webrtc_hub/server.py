@@ -323,7 +323,10 @@ async def _handle_detection_async(client_id: str, channel, data: dict, payload: 
                     fh.get("value")
                 )
 
-    channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+    if getattr(channel, "readyState", "") == "open":
+        channel.send(json.dumps({"type": "data_ack", "ts": data.get("ts")}, ensure_ascii=False))
+    else:
+        log.warning("Skipping data_ack for %s — channel already %s", client_id, getattr(channel, "readyState", "unknown"))
 
 
 def _handle_data_message(client_id: str, st: ClientState, channel, data: dict):
