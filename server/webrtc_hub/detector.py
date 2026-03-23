@@ -276,31 +276,99 @@ class EnhancedAnomalyDetector:
                              p_dongle[-1], p_hand_scanner[-1], p_passport[-1], p_2d_scanner[-1], p_phone_charger[-1], p_keyboard[-1], p_msr[-1],
                              idle_arr[-1]]
             
+            # Binary metrics: state-change based scoring
+            _binary_metrics = {"Process", "Dongle", "HandScanner", "PassportReader",
+                               "2DScanner", "PhoneCharger", "Keyboard", "MSR", "POS_Idle"}
+            # Thresholds for continuous metrics
+            _continuous_thresholds = {
+                "CPU": (80.0, 90.0),       # warning, critical
+                "Memory": (85.0, 95.0),
+                "DiskIO": (70.0, 85.0),
+                "NetworkSent": (50000.0, 100000.0),
+                "NetworkRecv": (50000.0, 100000.0),
+            }
+            # Data sample count for confidence calculation
+            n_samples = len(X)
+            if n_samples < 20:
+                data_confidence = 0.4
+            elif n_samples < 60:
+                data_confidence = 0.7
+            else:
+                data_confidence = 0.9
+
             for i, (name, value) in enumerate(zip(metric_names, metric_values)):
-                # Simple univariate score approximation
                 metric_data = X[:, i]
-                percentile = np.sum(metric_data < value) / len(metric_data)
-                metric_score = abs(percentile - 0.5) * 2  # Distance from median
-                
-                p95 = float(np.percentile(metric_data, 95))
-                metric_severity = "warning" if metric_score > 0.8 else "normal"
-                pct_rank = percentile * 100
-                unit = '%' if name in ('CPU', 'Memory') else ('bytes' if name.startswith('Network') else '')
-                val_str = f"{value:.0f}" if name in ('NetworkSent', 'NetworkRecv', 'Process') else f"{value:.1f}"
-                if metric_severity == "warning":
-                    metric_details = f"{name} {val_str}{unit} — 상위 {100 - pct_rank:.0f}% (p95={p95:.1f})"
+
+                if name in _binary_metrics:
+                    # Binary: score based on state, not percentile
+                    # Normal state = 1 (running/connected), abnormal = 0
+                    most_common = float(np.median(metric_data))
+                    if name == "POS_Idle":
+                        # POS_Idle: 0=busy(normal during business), 1=idle
+                        metric_score = 0.0
+                        metric_severity = "normal"
+                        state_str = "유휴" if value == 1 else "사용중"
+                        metric_details = f"{name}: {state_str}"
+                    elif value == 0 and most_common == 1:
+                        # Was running, now stopped → abnormal
+                        metric_score = 1.0
+                        metric_severity = "critical"
+                        metric_details = f"{name} 비정상 (꺼짐)"
+                    elif value == 1 and most_common == 0:
+                        # Was stopped, now running → recovered
+                        metric_score = 0.3
+                        metric_severity = "normal"
+                        metric_details = f"{name} 복구됨 (켜짐)"
+                    else:
+                        # Status unchanged
+                        metric_score = 0.0
+                        metric_severity = "normal"
+                        state_str = "정상" if value == 1 else "꺼짐"
+                        metric_details = f"{name}: {state_str}"
+
+                    results.append(AnomalyResult(
+                        engine="ecod",
+                        metric=name,
+                        value=float(value),
+                        score=float(metric_score),
+                        threshold=0.5,
+                        severity=metric_severity,
+                        confidence=data_confidence,
+                        details=metric_details,
+                    ))
                 else:
-                    metric_details = f"{name} {val_str}{unit} (상위 {100 - pct_rank:.0f}%)"
-                results.append(AnomalyResult(
-                    engine="ecod",
-                    metric=name,
-                    value=float(value),
-                    score=float(metric_score),
-                    threshold=p95,
-                    severity=metric_severity,
-                    confidence=confidence * 0.8,
-                    details=metric_details,
-                ))
+                    # Continuous: percentile-based scoring + threshold check
+                    percentile = np.sum(metric_data < value) / len(metric_data)
+                    metric_score = percentile  # 0=lowest, 1=highest in history
+                    p95 = float(np.percentile(metric_data, 95))
+                    pct_rank = percentile * 100
+
+                    # Severity from absolute thresholds
+                    warn_th, crit_th = _continuous_thresholds.get(name, (70.0, 85.0))
+                    if value >= crit_th:
+                        metric_severity = "critical"
+                    elif value >= warn_th or metric_score >= 0.95:
+                        metric_severity = "warning"
+                    else:
+                        metric_severity = "normal"
+
+                    unit = '%' if name in ('CPU', 'Memory') else ('bytes' if name.startswith('Network') else '')
+                    val_str = f"{value:.0f}" if name in ('NetworkSent', 'NetworkRecv') else f"{value:.1f}"
+                    if metric_severity in ("warning", "critical"):
+                        metric_details = f"{name} {val_str}{unit} — 상위 {100 - pct_rank:.0f}% (p95={p95:.1f})"
+                    else:
+                        metric_details = f"{name} {val_str}{unit} (상위 {100 - pct_rank:.0f}%)"
+
+                    results.append(AnomalyResult(
+                        engine="ecod",
+                        metric=name,
+                        value=float(value),
+                        score=float(metric_score),
+                        threshold=p95,
+                        severity=metric_severity,
+                        confidence=data_confidence,
+                        details=metric_details,
+                    ))
             
         except Exception as e:
             log.warning(f"Multivariate ECOD failed: {e}")

@@ -647,9 +647,9 @@ def build_time_slots(config: HistoricalConfig, start_after: Optional[datetime] =
     Returns:
         List of datetime objects
     """
-    # Floor current time to interval boundary
-    now = datetime.utcnow()
-    now = now.replace(second=0, microsecond=0)
+    # All timestamps are UTC. datetime.now(timezone.utc) replaces deprecated utcnow()
+    from datetime import timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
     minutes_to_floor = now.minute % config.interval_min
     now = now - timedelta(minutes=minutes_to_floor)
 
@@ -662,7 +662,7 @@ def build_time_slots(config: HistoricalConfig, start_after: Optional[datetime] =
         start = sa.replace(second=0, microsecond=0)
         sa_floor = start.minute % config.interval_min
         start = start - timedelta(minutes=sa_floor) + timedelta(minutes=config.interval_min)
-        log.info(f"build_time_slots: start_after={sa} -> start={start}, now={now}")
+        log.info(f"build_time_slots: start_after={sa} (UTC) -> start={start} (UTC), now={now} (UTC)")
     else:
         start = now - timedelta(hours=config.hours)
 
@@ -825,7 +825,7 @@ async def main(
         bucket: InfluxDB bucket
         horizons: Comma-separated forecast horizons in minutes
         from_influx: Load base data from InfluxDB instead of file
-        start_after: ISO datetime string — fill from this time to now (e.g. "2026-03-20T18:50:00")
+        start_after: ISO datetime in UTC — fill from this time to now (e.g. "2026-03-20T09:51:00" for KST 18:51)
         seed: Random seed for reproducibility
     """
     # Parse horizons
@@ -938,155 +938,228 @@ async def main(
         # Generate data: synthesize with time-of-day variation + events
         data_points = synthesize_data(windows, placeholder_slots, config.agent_id, config, seed=seed)
 
-        # PASS 1: Run all ARIMA/ECOD in memory — no InfluxDB writes yet.
-        # This separates CPU-intensive ML work from timestamp assignment so that
-        # we can recompute "now" after processing completes, minimising the gap
-        # between the last historical slot and live data.
-        log.info(f"Pass 1/2: ARIMA/ECOD detection ({total_slots} slots)...")
-        detection_results = []
-        for i, data_point in enumerate(data_points):
-            try:
-                if i >= actual_warmup:
-                    result = detector.detect(data_point, run_ecod=True, run_arima=True)
-                else:
-                    result = detector.detect(data_point, run_ecod=False, run_arima=False)
-                detection_results.append(result)
-            except Exception as e:
-                log.error(f"Detection error for slot {i}: {e}")
-                detection_results.append(None)
+        # Connect to InfluxDB
+        influx_writer.INFLUX_BUCKET = config.bucket
+        log.info(f"Connecting to InfluxDB... (bucket={config.bucket})")
+        init_influx()
 
-            if (i + 1) % max(1, total_slots // 10) == 0:
-                pct = (i + 1) * 100 // total_slots
-                log.info(f"  {i+1}/{total_slots} ({pct}%)")
+        fe = ForecastEvaluator()
+        total_forecasts = 0
+        total_evaluations = 0
 
-        # Recompute fresh timestamps NOW — after all ML work is done.
-        # The gap between the last slot and live data is now just InfluxDB write time.
-        if not start_after_dt:
-            # Only recompute timestamps if not filling a specific gap
+        if start_after_dt:
+            # ── Single-pass: detect + write per slot (safe against crashes) ──
+            log.info(f"Single-pass: detect + write ({total_slots} slots, timestamps fixed)...")
+
+            for i, data_point in enumerate(data_points):
+                # 1. Detection
+                result = None
+                try:
+                    if i >= actual_warmup:
+                        result = detector.detect(data_point, run_ecod=True, run_arima=True)
+                    else:
+                        result = detector.detect(data_point, run_ecod=False, run_arima=False)
+                except Exception as e:
+                    log.error(f"Detection error slot {i}: {e}")
+
+                # 2. Write metrics
+                try:
+                    raw_metrics = {
+                        "CPU": data_point["CPU"],
+                        "Memory": data_point["Memory"],
+                        "DiskIO": data_point["DiskIO"],
+                        "_nanos_offset": data_point["_nanos_offset"],
+                    }
+                    await write_metrics(
+                        agent_id=data_point["AgentId"],
+                        timestamp=data_point["Timestamp"],
+                        raw_metrics=raw_metrics,
+                        bucket=config.bucket,
+                        full_data=data_point,
+                    )
+                except Exception as e:
+                    log.warning(f"Metrics write error slot {i}: {e}")
+
+                # 3. Write forecasts + evaluations
+                if result and i >= actual_warmup:
+                    agent_id_val = data_point["AgentId"]
+                    timestamp_val = data_point["Timestamp"]
+                    forecasts_by_horizon: dict = {}
+
+                    for detection in result.detections:
+                        if detection.engine == "arima" and detection.forecast_horizon:
+                            for horizon_info in detection.forecast_horizon:
+                                try:
+                                    await write_forecast(
+                                        agent_id=agent_id_val,
+                                        timestamp=timestamp_val,
+                                        metric=detection.metric,
+                                        horizon_min=horizon_info["minutes"],
+                                        predicted_value=horizon_info["value"],
+                                        bucket=config.bucket,
+                                    )
+                                    tracker.record(agent_id_val, detection.metric, timestamp_val,
+                                                   horizon_info["minutes"], horizon_info["value"])
+                                    total_forecasts += 1
+                                except Exception as e:
+                                    log.warning(f"Forecast write error: {e}")
+
+                                h_min = horizon_info["minutes"]
+                                if h_min not in forecasts_by_horizon:
+                                    forecasts_by_horizon[h_min] = {}
+                                metric_key = detection.metric.lower()
+                                if metric_key == "diskio":
+                                    metric_key = "disk_io"
+                                forecasts_by_horizon[h_min][metric_key] = horizon_info["value"]
+
+                    if forecasts_by_horizon:
+                        fe.update_event(agent_id_val, data_point)
+                        fe.update_fallback_buffer(agent_id_val, data_point)
+                        eval_result = fe.evaluate(agent_id_val, timestamp_val, forecasts_by_horizon)
+                        eval_dict = fe.to_dict(eval_result)
+                        try:
+                            await write_forecast_evaluation(
+                                agent_id=agent_id_val,
+                                timestamp=timestamp_val,
+                                horizons=eval_dict.get("horizons", []),
+                                overall_severity=eval_dict.get("overall_severity", "normal"),
+                                model_ready=eval_dict.get("model_ready", False),
+                                data_source=eval_dict.get("data_source", "none"),
+                                bucket=config.bucket,
+                            )
+                            total_evaluations += 1
+                        except Exception as e:
+                            log.warning(f"Eval write error: {e}")
+
+                    asyncio.create_task(tracker.compare_actual_async(
+                        agent_id=agent_id_val, timestamp=timestamp_val,
+                        raw_metrics=result.raw_metrics,
+                    ))
+
+                if (i + 1) % max(1, total_slots // 10) == 0:
+                    pct = (i + 1) * 100 // total_slots
+                    log.info(f"  {i+1}/{total_slots} ({pct}%) — forecasts: {total_forecasts}, evals: {total_evaluations}")
+                    await asyncio.sleep(0)
+
+        else:
+            # ── Two-pass: detect all → recompute timestamps → write ──
+            log.info(f"Pass 1/2: ARIMA/ECOD detection ({total_slots} slots)...")
+            detection_results = []
+            for i, data_point in enumerate(data_points):
+                try:
+                    if i >= actual_warmup:
+                        result = detector.detect(data_point, run_ecod=True, run_arima=True)
+                    else:
+                        result = detector.detect(data_point, run_ecod=False, run_arima=False)
+                    detection_results.append(result)
+                except Exception as e:
+                    log.error(f"Detection error slot {i}: {e}")
+                    detection_results.append(None)
+
+                if (i + 1) % max(1, total_slots // 10) == 0:
+                    pct = (i + 1) * 100 // total_slots
+                    log.info(f"  {i+1}/{total_slots} ({pct}%)")
+
+            # Recompute timestamps
             fresh_slots = build_time_slots(config)
             for i, data_point in enumerate(data_points):
                 if i < len(fresh_slots):
                     data_point["Timestamp"] = fresh_slots[i].isoformat() + "Z"
             log.info(f"Timestamps refreshed: {fresh_slots[0]} → {fresh_slots[-1]}")
-        else:
-            log.info(f"Using fixed timestamps: {data_points[0]['Timestamp']} → {data_points[-1]['Timestamp']}")
 
-        # Connect to InfluxDB right before writing (avoids idle-timeout disconnect during Pass 1)
-        # Set INFLUX_BUCKET so predict_tracker writes accuracy to the correct bucket
-        influx_writer.INFLUX_BUCKET = config.bucket
-        log.info(f"Connecting to InfluxDB... (bucket={config.bucket})")
-        init_influx()
+            # Pre-populate ForecastEvaluator
+            _train_X = np.array([[dp["CPU"], dp["Memory"], dp["DiskIO"]] for dp in data_points])
+            if len(_train_X) >= 10:
+                from pyod.models.ecod import ECOD as _ECOD
+                _ecod = _ECOD(contamination=0.05)
+                _ecod.fit(_train_X)
+                fe.models[config.agent_id] = _ecod
+                fe.train_scores[config.agent_id] = _ecod.decision_function(_train_X)
+                fe._training_data_cache[config.agent_id] = _train_X
+                import time as _time
+                fe.last_retrain[config.agent_id] = _time.time()
+                log.info(f"Pre-trained ForecastEvaluator ECOD with {len(_train_X)} points")
 
-        # PASS 2: Write metrics and forecasts to InfluxDB with fresh timestamps.
-        log.info(f"Pass 2/2: Writing to InfluxDB...")
-        total_forecasts = 0
-        total_evaluations = 0
-        fe = ForecastEvaluator()
+            log.info(f"Pass 2/2: Writing to InfluxDB...")
+            for i, (data_point, result) in enumerate(zip(data_points, detection_results)):
+                try:
+                    raw_metrics = {
+                        "CPU": data_point["CPU"],
+                        "Memory": data_point["Memory"],
+                        "DiskIO": data_point["DiskIO"],
+                        "_nanos_offset": data_point["_nanos_offset"],
+                    }
+                    await write_metrics(
+                        agent_id=data_point["AgentId"],
+                        timestamp=data_point["Timestamp"],
+                        raw_metrics=raw_metrics,
+                        bucket=config.bucket,
+                        full_data=data_point,
+                    )
+                except Exception as e:
+                    log.warning(f"Metrics write error slot {i}: {e}")
 
-        # Pre-populate ForecastEvaluator with training data from data_points
-        # so ECOD model + feature contributions work from the start
-        _train_X = np.array([[dp["CPU"], dp["Memory"], dp["DiskIO"]] for dp in data_points])
-        if len(_train_X) >= 10:
-            from pyod.models.ecod import ECOD as _ECOD
-            _ecod = _ECOD(contamination=0.05)
-            _ecod.fit(_train_X)
-            fe.models[config.agent_id] = _ecod
-            fe.train_scores[config.agent_id] = _ecod.decision_function(_train_X)
-            fe._training_data_cache[config.agent_id] = _train_X
-            import time as _time
-            fe.last_retrain[config.agent_id] = _time.time()
-            log.info(f"Pre-trained ForecastEvaluator ECOD with {len(_train_X)} points")
+                if result and i >= actual_warmup:
+                    agent_id_val = data_point["AgentId"]
+                    timestamp_val = data_point["Timestamp"]
+                    forecasts_by_horizon: dict = {}
 
-        for i, (data_point, result) in enumerate(zip(data_points, detection_results)):
-            # Write metrics
-            try:
-                raw_metrics = {
-                    "CPU": data_point["CPU"],
-                    "Memory": data_point["Memory"],
-                    "DiskIO": data_point["DiskIO"],
-                    "_nanos_offset": data_point["_nanos_offset"],
-                }
-                success = await write_metrics(
-                    agent_id=data_point["AgentId"],
-                    timestamp=data_point["Timestamp"],
-                    raw_metrics=raw_metrics,
-                    bucket=config.bucket,
-                    full_data=data_point,
-                )
-                if not success:
-                    log.warning(f"Failed to write metrics for slot {i}")
-            except Exception as e:
-                log.warning(f"Metrics write error for slot {i}: {e}")
+                    for detection in result.detections:
+                        if detection.engine == "arima" and detection.forecast_horizon:
+                            for horizon_info in detection.forecast_horizon:
+                                try:
+                                    await write_forecast(
+                                        agent_id=agent_id_val,
+                                        timestamp=timestamp_val,
+                                        metric=detection.metric,
+                                        horizon_min=horizon_info["minutes"],
+                                        predicted_value=horizon_info["value"],
+                                        bucket=config.bucket,
+                                    )
+                                    tracker.record(agent_id_val, detection.metric, timestamp_val,
+                                                   horizon_info["minutes"], horizon_info["value"])
+                                    total_forecasts += 1
+                                except Exception as e:
+                                    log.warning(f"Forecast write error: {e}")
 
-            # Write forecasts and forecast evaluations
-            if result and i >= actual_warmup:
-                agent_id_val = data_point["AgentId"]
-                timestamp_val = data_point["Timestamp"]
+                                h_min = horizon_info["minutes"]
+                                if h_min not in forecasts_by_horizon:
+                                    forecasts_by_horizon[h_min] = {}
+                                metric_key = detection.metric.lower()
+                                if metric_key == "diskio":
+                                    metric_key = "disk_io"
+                                forecasts_by_horizon[h_min][metric_key] = horizon_info["value"]
 
-                # Collect ARIMA predictions per horizon for evaluation
-                forecasts_by_horizon: dict = {}
+                    if forecasts_by_horizon:
+                        fe.update_event(agent_id_val, data_point)
+                        fe.update_fallback_buffer(agent_id_val, data_point)
+                        eval_result = fe.evaluate(agent_id_val, timestamp_val, forecasts_by_horizon)
+                        eval_dict = fe.to_dict(eval_result)
+                        try:
+                            await write_forecast_evaluation(
+                                agent_id=agent_id_val,
+                                timestamp=timestamp_val,
+                                horizons=eval_dict.get("horizons", []),
+                                overall_severity=eval_dict.get("overall_severity", "normal"),
+                                model_ready=eval_dict.get("model_ready", False),
+                                data_source=eval_dict.get("data_source", "none"),
+                                bucket=config.bucket,
+                            )
+                            total_evaluations += 1
+                        except Exception as e:
+                            log.warning(f"Eval write error: {e}")
 
-                for detection in result.detections:
-                    if detection.engine == "arima" and detection.forecast_horizon:
-                        for horizon_info in detection.forecast_horizon:
-                            try:
-                                await write_forecast(
-                                    agent_id=agent_id_val,
-                                    timestamp=timestamp_val,
-                                    metric=detection.metric,
-                                    horizon_min=horizon_info["minutes"],
-                                    predicted_value=horizon_info["value"],
-                                    bucket=config.bucket,
-                                )
-                                tracker.record(agent_id_val, detection.metric, timestamp_val,
-                                               horizon_info["minutes"], horizon_info["value"])
-                                total_forecasts += 1
-                            except Exception as e:
-                                log.warning(f"Failed to write forecast: {e}")
+                    asyncio.create_task(tracker.compare_actual_async(
+                        agent_id=agent_id_val, timestamp=timestamp_val,
+                        raw_metrics=result.raw_metrics,
+                    ))
 
-                            # Collect for forecast evaluation
-                            h_min = horizon_info["minutes"]
-                            if h_min not in forecasts_by_horizon:
-                                forecasts_by_horizon[h_min] = {}
-                            metric_key = detection.metric.lower()
-                            if metric_key == "diskio":
-                                metric_key = "disk_io"
-                            forecasts_by_horizon[h_min][metric_key] = horizon_info["value"]
+                if (i + 1) % max(1, total_slots // 10) == 0:
+                    pct = (i + 1) * 100 // total_slots
+                    log.info(f"  {i+1}/{total_slots} ({pct}%) — forecasts: {total_forecasts}, evals: {total_evaluations}")
+                    await asyncio.sleep(0)
 
-                # Run forecast evaluation and write to InfluxDB
-                if forecasts_by_horizon:
-                    fe.update_event(agent_id_val, data_point)
-                    fe.update_fallback_buffer(agent_id_val, data_point)
-                    eval_result = fe.evaluate(agent_id_val, timestamp_val, forecasts_by_horizon)
-                    eval_dict = fe.to_dict(eval_result)
-
-                    try:
-                        await write_forecast_evaluation(
-                            agent_id=agent_id_val,
-                            timestamp=timestamp_val,
-                            horizons=eval_dict.get("horizons", []),
-                            overall_severity=eval_dict.get("overall_severity", "normal"),
-                            model_ready=eval_dict.get("model_ready", False),
-                            data_source=eval_dict.get("data_source", "none"),
-                            bucket=config.bucket,
-                        )
-                        total_evaluations += 1
-                    except Exception as e:
-                        log.warning(f"Failed to write forecast evaluation: {e}")
-
-                # Fire-and-forget: don't await accuracy writes so they don't block the main loop
-                asyncio.create_task(tracker.compare_actual_async(
-                    agent_id=agent_id_val,
-                    timestamp=timestamp_val,
-                    raw_metrics=result.raw_metrics,
-                ))
-
-            if (i + 1) % max(1, total_slots // 10) == 0:
-                pct = (i + 1) * 100 // total_slots
-                log.info(f"  {i+1}/{total_slots} ({pct}%) — forecasts: {total_forecasts}, evaluations: {total_evaluations}")
-                await asyncio.sleep(0)  # yield to let pending accuracy tasks run
-
-        # Wait for all pending accuracy writes to complete before closing connection
+        # Wait for pending accuracy writes
         log.info("Waiting for accuracy writes to flush...")
         await asyncio.sleep(2)
         pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
