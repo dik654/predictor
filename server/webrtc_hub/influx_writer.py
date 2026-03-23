@@ -932,6 +932,10 @@ def get_latest_forecast_evaluation(
                     h["predicted_memory"] = float(value)
                 elif field == "predicted_disk_io" and value is not None:
                     h["predicted_disk_io"] = float(value)
+                elif field == "predicted_network_sent" and value is not None:
+                    h["predicted_network_sent"] = float(value)
+                elif field == "predicted_network_recv" and value is not None:
+                    h["predicted_network_recv"] = float(value)
                 elif field == "ecod_score" and value is not None:
                     h["ecod_score"] = float(value)
                 elif field == "rule_score" and value is not None:
