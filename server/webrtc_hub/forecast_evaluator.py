@@ -204,20 +204,23 @@ class ForecastEvaluator:
         return None
 
     def _train_model(self, agent_id: str) -> bool:
-        """Train or retrain long-term ECOD model for an agent."""
+        """Train or retrain long-term ECOD model for an agent.
+        Uses only system metrics (first 5 features) for forecast evaluation."""
         X = self._get_training_data(agent_id)
         if X is None:
             return False
 
         try:
+            # 시스템 메트릭만 사용 (CPU, Memory, DiskIO, NetworkSent, NetworkRecv)
+            X_sys = X[:, :5]
             model = ECOD(contamination=0.05)
-            model.fit(X)
+            model.fit(X_sys)
             self.models[agent_id] = model
 
             # Store training scores for percentile-based normalization
-            self.train_scores[agent_id] = model.decision_function(X)
+            self.train_scores[agent_id] = model.decision_function(X_sys)
             # Cache training data for feature contribution calculation
-            self._training_data_cache[agent_id] = X
+            self._training_data_cache[agent_id] = X_sys
             self.last_retrain[agent_id] = time.time()
 
             log.info(
@@ -417,11 +420,9 @@ class ForecastEvaluator:
             raw_nr = preds.get("network_recv", 0)
             net_recv = float(train_medians[4]) if not raw_nr or raw_nr <= 100 else raw_nr
 
-            # 14차원 벡터: ARIMA 예측(연속) + 현재 상태(이산) + 유휴 여부
-            feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
-                             "Dongle", "HandScanner", "PassportReader", "2DScanner", "PhoneCharger", "Keyboard", "MSR",
-                             "POS_Idle"]
-            feature_values = [cpu, mem, disk, net_sent, net_recv, proc] + periph_values + [is_idle]
+            # 시스템 메트릭 5개만으로 ECOD 평가 (주변장치는 rule_score에서 별도 반영)
+            feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv"]
+            feature_values = [cpu, mem, disk, net_sent, net_recv]
             point = np.array([feature_values])
             feature_contribs: List[FeatureContribution] = []
             try:

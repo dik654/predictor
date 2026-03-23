@@ -159,6 +159,8 @@ def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
     REQUIRED_HORIZONS = [60, 360, 720, 1440, 2880]
 
     for i, (ts_iso, horizons_data) in enumerate(sorted_slots):
+        # 필요한 horizon만 유지 (30분 등 제외)
+        horizons_data = {h: v for h, v in horizons_data.items() if h in REQUIRED_HORIZONS}
         # 없는 horizon은 가장 긴 예측값을 재사용
         if horizons_data:
             max_h = max(horizons_data.keys())
@@ -166,6 +168,8 @@ def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
             for h in REQUIRED_HORIZONS:
                 if h not in horizons_data:
                     horizons_data[h] = fallback.copy()
+        else:
+            continue
 
         eval_result = fe.evaluate(agent_id, ts_iso, horizons_data)
         eval_dict = fe.to_dict(eval_result)
