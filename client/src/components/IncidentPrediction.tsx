@@ -152,8 +152,8 @@ const METRIC_THRESHOLDS: Record<string, { warning: number; critical: number; uni
   CPU: { warning: 80, critical: 90, unit: '%' },
   Memory: { warning: 85, critical: 95, unit: '%' },
   DiskIO: { warning: 0.7, critical: 0.85, unit: 'MB/s' },
-  NetworkSent: { warning: 50, critical: 100, unit: 'KB' },
-  NetworkRecv: { warning: 50, critical: 100, unit: 'KB' },
+  NetworkSent: { warning: 51200, critical: 102400, unit: '' },
+  NetworkRecv: { warning: 51200, critical: 102400, unit: '' },
   // 이산값: 0=실패, 1=정상
   Dongle: { warning: 0.5, critical: 0, unit: '' },
   HandScanner: { warning: 0.5, critical: 0, unit: '' },
@@ -463,7 +463,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
                   <span>
                     {threshold.critical === 0
                       ? <><span style={{ color: '#22c55e' }}>1=정상</span> / <span style={{ color: '#ef4444' }}>0=실패</span></>
-                      : <>주의 <span style={{ color: '#f59e0b' }}>{threshold.warning}{unit}</span> / 위험 <span style={{ color: '#ef4444' }}>{threshold.critical}{unit}</span></>}
+                      : <>주의 <span style={{ color: '#f59e0b' }}>{fmtVal(fc.metric, threshold.warning)}</span> / 위험 <span style={{ color: '#ef4444' }}>{fmtVal(fc.metric, threshold.critical)}</span></>}
                   </span>
                 )}
               </div>
@@ -544,7 +544,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                       <span style={{ fontSize: 11, color: '#cbd5e1' }}>
                         {threshold.critical === 0
                           ? '연결 성공=1 / 연결 실패=0'
-                          : `주의 ${threshold.warning}${unit} / 위험 ${threshold.critical}${unit}`}
+                          : `주의 ${fmtVal(t.metric, threshold.warning)} / 위험 ${fmtVal(t.metric, threshold.critical)}`}
                       </span>
                     )}
                     <span style={{
