@@ -493,7 +493,12 @@ async def main(
     if start_after:
         try:
             parsed = datetime.fromisoformat(start_after.rstrip("Z"))
-            start_after_dt = parsed.replace(tzinfo=None)  # normalize to naive UTC
+            naive = parsed.replace(tzinfo=None)
+            # If from InfluxDB (UTC), convert to KST naive to match slot generation
+            if parsed.tzinfo is not None or start_after.endswith('+00:00'):
+                start_after_dt = naive + timedelta(hours=9)
+            else:
+                start_after_dt = naive  # already KST if user-provided
         except ValueError:
             log.error(f"Invalid --start-after: {start_after}")
             return
@@ -504,8 +509,9 @@ async def main(
         log.error("No base data loaded!")
         return
 
-    # Build time slots (UTC)
-    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    # Build time slots (KST naive — _parse_timestamp converts KST→UTC for InfluxDB)
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST).replace(tzinfo=None, second=0, microsecond=0)
     now = now - timedelta(minutes=now.minute % interval_min)
 
     if start_after_dt:
@@ -526,7 +532,7 @@ async def main(
 
     total = len(slots)
     log.info(f"Parallel Generator: {total} slots, {workers} ARIMA workers")
-    log.info(f"  Range: {slots[0]} → {slots[-1]} (UTC)")
+    log.info(f"  Range: {slots[0]} → {slots[-1]} (KST)")
     log.info(f"  Base patterns: {len(base)}")
 
     # Synthesize
