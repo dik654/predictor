@@ -760,13 +760,18 @@ function RiskTimelineChart({ horizons }: { horizons: HorizonData[] }) {
       },
       series: [
         {
-          name: '위험도', type: 'bar' as const, data: riskData.map(v => ({
-            value: v,
-            itemStyle: {
-              color: v >= 70 ? 'rgba(239,68,68,0.7)' : v >= 40 ? 'rgba(251,191,36,0.6)' : 'rgba(59,130,246,0.5)',
-              borderRadius: [3, 3, 0, 0],
-            },
-          })),
+          name: '위험도', type: 'bar' as const, data: (() => {
+            const maxVal = Math.max(...riskData);
+            return riskData.map(v => ({
+              value: v,
+              itemStyle: {
+                color: v === maxVal ? 'rgba(249,115,22,0.85)' : v >= 70 ? 'rgba(239,68,68,0.7)' : v >= 40 ? 'rgba(251,191,36,0.6)' : 'rgba(59,130,246,0.5)',
+                borderRadius: [3, 3, 0, 0],
+                borderColor: v === maxVal ? '#f97316' : 'transparent',
+                borderWidth: v === maxVal ? 2 : 0,
+              },
+            }));
+          })(),
           barWidth: '30%',
           label: { show: true, position: 'top' as const, color: '#cbd5e1', fontSize: 11, formatter: '{c}%' },
         },
