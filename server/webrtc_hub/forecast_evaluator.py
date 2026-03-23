@@ -403,12 +403,16 @@ class ForecastEvaluator:
         is_idle = 1.0
         proc = 1.0
 
+        # 학습 데이터 중앙값 (예측값 없는 메트릭은 "평소 수준"으로 → ECOD에 영향 안 줌)
+        X_train = self._training_data_cache.get(agent_id)
+        train_medians = np.median(X_train, axis=0) if X_train is not None else np.zeros(14)
+
         for horizon_min, preds in sorted(forecasts.items()):
-            cpu = preds.get("cpu", 0)
-            mem = preds.get("memory", 0)
-            disk = preds.get("disk_io", 0)
-            net_sent = preds.get("network_sent", 0)
-            net_recv = preds.get("network_recv", 0)
+            cpu = preds.get("cpu") or float(train_medians[0])
+            mem = preds.get("memory") or float(train_medians[1])
+            disk = preds.get("disk_io") or float(train_medians[2])
+            net_sent = preds.get("network_sent") or float(train_medians[3])
+            net_recv = preds.get("network_recv") or float(train_medians[4])
 
             # 14차원 벡터: ARIMA 예측(연속) + 현재 상태(이산) + 유휴 여부
             feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
