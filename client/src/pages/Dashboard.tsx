@@ -155,7 +155,11 @@ export function Dashboard() {
     : historyEngine === 'peripheral' ? dbDetections.filter(d => d.engine === 'peripheral' || (d.engine === 'ecod' && PERIPHERAL_METRICS.has(d.metric)))
     : dbDetections.filter(d => d.engine === historyEngine);
   const allDetections = filteredDetections.slice(-50).reverse();
-  const ecodWarnings = ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical');
+  const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
+  // ECOD 경고: 시스템 메트릭만 (주변장치는 별도 카드에서 표시)
+  const ecodWarnings = ecodData.filter(d =>
+    (d.severity === 'warning' || d.severity === 'critical') && !BINARY_METRICS.has(d.metric)
+  );
   // ARIMA 경고: 메트릭별 최신 임계값 기준으로 클라이언트에서 재판정
   const arimaWarnings = (() => {
     // 메트릭별 최신 threshold 수집
@@ -170,9 +174,8 @@ export function Dashboard() {
     });
   })();
 
-  // ECOD 경고 요약: 이진(주변장치) vs 연속(시스템) 분리
-  const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
-  const ecodBinaryWarns = [...new Set(ecodWarnings.filter(d => BINARY_METRICS.has(d.metric)).map(d => d.metric))];
+  // ECOD 경고 요약: 이진(주변장치) vs 연속(시스템) 분리 — ecodWarnings는 이미 시스템만 필터됨
+  const ecodBinaryWarns: string[] = []; // 주변장치는 별도 카드에서 처리
   const ecodSystemWarns = ecodWarnings.filter(d => !BINARY_METRICS.has(d.metric) && d.metric !== 'Multivariate');
   const ecodSystemSummary = [...new Set(ecodSystemWarns.map(d => d.metric))].map(m => {
     const latest = ecodSystemWarns.filter(d => d.metric === m).slice(-1)[0];
