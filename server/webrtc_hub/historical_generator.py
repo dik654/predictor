@@ -795,7 +795,7 @@ async def main(
     if start_after_dt:
         log.info(f"  Range: {start_after_dt} → now")
     else:
-        log.info(f"  Range: {config.hours} hours ({total_slots} slots)")
+        log.info(f"  Range: {config.hours} hours")
     log.info(f"  Agent: {config.agent_id}")
     log.info(f"  Bucket: {config.bucket}")
     log.info(f"  Horizons: {config.horizons_min} minutes")
