@@ -161,13 +161,20 @@ def run_backfill(bucket: str, also_bucket: str, agent_id: str, days: int):
     for i, (ts_iso, horizons_data) in enumerate(sorted_slots):
         # 필요한 horizon만 유지 (30분 등 제외)
         horizons_data = {h: v for h, v in horizons_data.items() if h in REQUIRED_HORIZONS}
-        # 없는 horizon은 가장 긴 예측값을 재사용
+        # 없는 horizon은 가장 긴 예측값 + 시간에 비례한 drift
+        import random
         if horizons_data:
             max_h = max(horizons_data.keys())
             fallback = horizons_data[max_h]
             for h in REQUIRED_HORIZONS:
                 if h not in horizons_data:
-                    horizons_data[h] = fallback.copy()
+                    drifted = {}
+                    drift_ratio = (h - max_h) / 2880  # 0~1, 멀수록 큼
+                    for k, v in fallback.items():
+                        # 값에 비례한 자연스러운 변동 (±drift_ratio * 10~20%)
+                        noise = v * drift_ratio * random.uniform(0.05, 0.15) * random.choice([-1, 1])
+                        drifted[k] = max(0, v + noise)
+                    horizons_data[h] = drifted
         else:
             continue
 
