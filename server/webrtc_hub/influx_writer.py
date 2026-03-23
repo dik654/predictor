@@ -1254,13 +1254,70 @@ async def write_detection(
         return False
 
 
+def _query_metrics_with_range(
+    agent_id: str,
+    limit: int,
+    target_bucket: str,
+    range_str: str,
+    order: str = "latest",
+    after: str | None = None,
+) -> list:
+    """Helper: query metrics with a specific time range.
+
+    order="latest": tail(n:limit) – most recent N records
+    order="oldest": limit(n:limit) – oldest N records from range
+    after: ISO timestamp cursor – only return data strictly after this time
+    """
+    range_start = after if after else range_str
+    limiter = f"limit(n: {limit})" if order == "oldest" else f"tail(n: {limit})"
+
+    query = f'''
+    from(bucket: "{target_bucket}")
+      |> range(start: {range_start})
+      |> filter(fn: (r) => r._measurement == "metrics")
+      |> filter(fn: (r) => r.agent_id == "{agent_id}")
+      |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
+          or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> group()
+      |> sort(columns: ["_time"], desc: false)
+      |> {limiter}
+    '''
+
+    query_api = client.query_api()
+    tables = query_api.query(query)
+
+    records = []
+    for table in tables:
+        for record in table.records:
+            ts = str(record.get_time())
+            vals = record.values
+            records.append({
+                "timestamp": ts,
+                "agent_id": agent_id,
+                "cpu": float(vals.get("cpu", 0) or 0),
+                "memory": float(vals.get("memory", 0) or 0),
+                "disk_io": float(vals.get("disk_io", 0) or 0),
+                "network_sent_bytes": float(vals.get("network_sent_bytes", 0) or 0),
+                "network_received_bytes": float(vals.get("network_received_bytes", 0) or 0),
+            })
+
+    return sorted(records, key=lambda x: x["timestamp"])
+
+
 def get_recent_metrics(
     agent_id: str,
     limit: int = 100,
     bucket: str | None = None,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
     """
     Query recent raw metrics from InfluxDB.
+
+    order="latest": progressively expands range (-1d→-3d→-7d) to get most recent N.
+    order="oldest": gets oldest N from -7d range (fast, uses limit instead of tail).
+    after: ISO timestamp cursor for pagination (e.g. "2026-03-20T12:00:00Z").
 
     Returns list of dicts with timestamp, cpu, memory, disk_io, network_sent, network_received.
     """
@@ -1270,39 +1327,28 @@ def get_recent_metrics(
         return []
 
     try:
-        query = f'''
-        from(bucket: "{target_bucket}")
-          |> range(start: -1d)
-          |> filter(fn: (r) => r._measurement == "metrics")
-          |> filter(fn: (r) => r.agent_id == "{agent_id}")
-          |> filter(fn: (r) => r._field == "cpu" or r._field == "memory" or r._field == "disk_io"
-              or r._field == "network_sent_bytes" or r._field == "network_received_bytes")
-          |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> group()
-          |> sort(columns: ["_time"], desc: false)
-          |> tail(n: {limit})
-        '''
+        if after:
+            # 커서 기반: after 시점 이후 데이터만 조회 (범위 자동 결정)
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, "-7d",
+                                                order=order, after=after)
+            log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (after={after})")
+            return records
 
-        query_api = client.query_api()
-        tables = query_api.query(query)
+        if order == "oldest":
+            # 가장 오래된 데이터부터: -7d 범위에서 limit(n:)으로 빠르게 조회
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, "-7d",
+                                                order="oldest")
+            log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (oldest, range=-7d)")
+            return records
 
-        records = []
-        for table in tables:
-            for record in table.records:
-                ts = str(record.get_time())
-                vals = record.values
-                records.append({
-                    "timestamp": ts,
-                    "agent_id": agent_id,
-                    "cpu": float(vals.get("cpu", 0) or 0),
-                    "memory": float(vals.get("memory", 0) or 0),
-                    "disk_io": float(vals.get("disk_io", 0) or 0),
-                    "network_sent_bytes": float(vals.get("network_sent_bytes", 0) or 0),
-                    "network_received_bytes": float(vals.get("network_received_bytes", 0) or 0),
-                })
-
-        records = sorted(records, key=lambda x: x["timestamp"])
-        log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records")
+        # order="latest": 점진적 확장
+        for range_str in ["-1d", "-3d", "-7d"]:
+            records = _query_metrics_with_range(agent_id, limit, target_bucket, range_str,
+                                                order="latest")
+            if len(records) >= limit:
+                log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (range={range_str})")
+                return records
+        log.debug(f"get_recent_metrics: {agent_id} -> {len(records)} records (range=-7d, partial)")
         return records
 
     except Exception as e:
@@ -1310,13 +1356,97 @@ def get_recent_metrics(
         return []
 
 
+def _query_detections_with_range(
+    agent_id: str,
+    limit: int,
+    target_bucket: str,
+    range_str: str,
+    order: str = "latest",
+    after: str | None = None,
+) -> list:
+    """Helper: query detections with a specific time range.
+
+    order="latest": keep last `limit` unique timestamps
+    order="oldest": keep first `limit` unique timestamps
+    after: ISO timestamp cursor – only return data strictly after this time
+    """
+    range_start = after if after else range_str
+
+    query = f'''
+    from(bucket: "{target_bucket}")
+      |> range(start: {range_start})
+      |> filter(fn: (r) => r._measurement == "anomaly_detection")
+      |> filter(fn: (r) => r.agent_id == "{agent_id}")
+    '''
+
+    query_api = client.query_api()
+    tables = query_api.query(query)
+
+    # Group by (timestamp, engine, metric) to reassemble fields
+    records_map: dict = {}
+    for table in tables:
+        for record in table.records:
+            ts = str(record.get_time())
+            engine = record.values.get("engine", "")
+            metric = record.values.get("metric", "")
+            severity = record.values.get("severity", "normal")
+            field = record.get_field()
+            value = record.get_value()
+
+            key = f"{ts}|{engine}|{metric}"
+            if key not in records_map:
+                records_map[key] = {
+                    "timestamp": ts,
+                    "engine": engine,
+                    "metric": metric,
+                    "severity": severity,
+                    "score": 0, "threshold": 0, "confidence": 0,
+                    "actual_value": None, "arima_predicted": None, "arima_deviation": None,
+                    "details": record.values.get("details"),
+                }
+
+            rec = records_map[key]
+            if field == "score" and value is not None:
+                rec["score"] = float(value)
+            elif field == "threshold" and value is not None:
+                rec["threshold"] = float(value)
+            elif field == "confidence" and value is not None:
+                rec["confidence"] = float(value)
+            elif field == "arima_predicted" and value is not None:
+                rec["arima_predicted"] = float(value)
+            elif field == "arima_deviation" and value is not None:
+                rec["arima_deviation"] = float(value)
+            elif field == "actual_value" and value is not None:
+                rec["actual_value"] = float(value)
+
+    records = sorted(records_map.values(), key=lambda x: x["timestamp"])
+
+    # 시점(timestamp) 기준으로 limit개만 유지
+    unique_times = sorted(set(r["timestamp"] for r in records))
+    if len(unique_times) > limit:
+        if order == "oldest":
+            cutoff = unique_times[limit - 1]
+            records = [r for r in records if r["timestamp"] <= cutoff]
+        else:
+            cutoff = unique_times[-limit]
+            records = [r for r in records if r["timestamp"] >= cutoff]
+
+    return records
+
+
 def get_recent_detections(
     agent_id: str,
     limit: int = 200,
     bucket: str | None = None,
+    order: str = "latest",
+    after: str | None = None,
 ) -> list:
     """
     Query recent anomaly detection results from InfluxDB.
+
+    order="latest": progressively expands range to get most recent N timestamps.
+    order="oldest": gets oldest N timestamps from -7d range.
+    after: ISO timestamp cursor for pagination.
 
     Returns list of dicts with timestamp, engine, metric, value, score, threshold,
     severity, confidence, forecast, residual, details.
@@ -1327,62 +1457,27 @@ def get_recent_detections(
         return []
 
     try:
-        # tail per series 문제를 피하기 위해 충분히 가져온 후 파이썬에서 시점 기준 제한
-        query = f'''
-        from(bucket: "{target_bucket}")
-          |> range(start: -1d)
-          |> filter(fn: (r) => r._measurement == "anomaly_detection")
-          |> filter(fn: (r) => r.agent_id == "{agent_id}")
-        '''
+        if after:
+            records = _query_detections_with_range(agent_id, limit, target_bucket, "-7d",
+                                                   order=order, after=after)
+            log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (after={after})")
+            return records
 
-        query_api = client.query_api()
-        tables = query_api.query(query)
+        if order == "oldest":
+            records = _query_detections_with_range(agent_id, limit, target_bucket, "-7d",
+                                                   order="oldest")
+            log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (oldest, range=-7d)")
+            return records
 
-        # Group by (timestamp, engine, metric) to reassemble fields
-        records_map: dict = {}
-        for table in tables:
-            for record in table.records:
-                ts = str(record.get_time())
-                engine = record.values.get("engine", "")
-                metric = record.values.get("metric", "")
-                severity = record.values.get("severity", "normal")
-                field = record.get_field()
-                value = record.get_value()
-
-                key = f"{ts}|{engine}|{metric}"
-                if key not in records_map:
-                    records_map[key] = {
-                        "timestamp": ts,
-                        "engine": engine,
-                        "metric": metric,
-                        "severity": severity,
-                        "score": 0, "threshold": 0, "confidence": 0,
-                        "actual_value": None, "arima_predicted": None, "arima_deviation": None,
-                        "details": record.values.get("details"),
-                    }
-
-                rec = records_map[key]
-                if field == "score" and value is not None:
-                    rec["score"] = float(value)
-                elif field == "threshold" and value is not None:
-                    rec["threshold"] = float(value)
-                elif field == "confidence" and value is not None:
-                    rec["confidence"] = float(value)
-                elif field == "arima_predicted" and value is not None:
-                    rec["arima_predicted"] = float(value)
-                elif field == "arima_deviation" and value is not None:
-                    rec["arima_deviation"] = float(value)
-                elif field == "actual_value" and value is not None:
-                    rec["actual_value"] = float(value)
-
-        records = sorted(records_map.values(), key=lambda x: x["timestamp"])
-
-        # 시점(timestamp) 기준으로 마지막 limit개만 유지
-        unique_times = sorted(set(r["timestamp"] for r in records))
-        if len(unique_times) > limit:
-            cutoff = unique_times[-limit]
-            records = [r for r in records if r["timestamp"] >= cutoff]
-        log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records")
+        # order="latest": 점진적 확장
+        for range_str in ["-1d", "-3d", "-7d"]:
+            records = _query_detections_with_range(agent_id, limit, target_bucket, range_str,
+                                                   order="latest")
+            unique_times = set(r["timestamp"] for r in records)
+            if len(unique_times) >= limit:
+                log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (range={range_str})")
+                return records
+        log.debug(f"get_recent_detections: {agent_id} -> {len(records)} records (range=-7d, partial)")
         return records
 
     except Exception as e:

@@ -656,14 +656,17 @@ async def api_forecast_evaluation(request: web.Request) -> web.Response:
 async def api_recent_metrics(request: web.Request) -> web.Response:
     """
     Get recent raw metrics from InfluxDB.
-    Query params: agent_id, limit, bucket
+    Query params: agent_id, limit, bucket, order (latest|oldest), after (ISO timestamp cursor)
     """
     agent_id = request.query.get("agent_id", "V135-POS-03")
     limit = int(request.query.get("limit", "100"))
     bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+    order = request.query.get("order", "latest")
+    after = request.query.get("after", None)
 
     try:
-        data = influx_writer.get_recent_metrics(agent_id, limit=limit, bucket=bucket)
+        data = influx_writer.get_recent_metrics(agent_id, limit=limit, bucket=bucket,
+                                                order=order, after=after)
         return web.json_response({"agent_id": agent_id, "metrics": data})
     except Exception as e:
         log.warning(f"Error querying recent metrics: {e}")
@@ -673,14 +676,17 @@ async def api_recent_metrics(request: web.Request) -> web.Response:
 async def api_recent_detections(request: web.Request) -> web.Response:
     """
     Get recent anomaly detection results from InfluxDB.
-    Query params: agent_id, limit, bucket
+    Query params: agent_id, limit, bucket, order (latest|oldest), after (ISO timestamp cursor)
     """
     agent_id = request.query.get("agent_id", "V135-POS-03")
     limit = int(request.query.get("limit", "200"))
     bucket = request.query.get("bucket", influx_writer.INFLUX_BUCKET)
+    order = request.query.get("order", "latest")
+    after = request.query.get("after", None)
 
     try:
-        data = influx_writer.get_recent_detections(agent_id, limit=limit, bucket=bucket)
+        data = influx_writer.get_recent_detections(agent_id, limit=limit, bucket=bucket,
+                                                   order=order, after=after)
         return web.json_response({"agent_id": agent_id, "detections": data})
     except Exception as e:
         log.warning(f"Error querying recent detections: {e}")
