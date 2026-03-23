@@ -492,7 +492,8 @@ async def main(
     start_after_dt = None
     if start_after:
         try:
-            start_after_dt = datetime.fromisoformat(start_after.rstrip("Z"))
+            parsed = datetime.fromisoformat(start_after.rstrip("Z"))
+            start_after_dt = parsed.replace(tzinfo=None)  # normalize to naive UTC
         except ValueError:
             log.error(f"Invalid --start-after: {start_after}")
             return
