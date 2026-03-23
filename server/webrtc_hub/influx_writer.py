@@ -812,9 +812,11 @@ async def write_forecast_evaluation(
                 .tag("severity", h.get("severity", "normal")) \
                 .tag("overall_severity", overall_severity) \
                 .tag("data_source", data_source) \
-                .field("predicted_cpu", float(h.get("predicted_cpu", 0))) \
-                .field("predicted_memory", float(h.get("predicted_memory", 0))) \
-                .field("predicted_disk_io", float(h.get("predicted_disk_io", 0))) \
+                .field("predicted_cpu", float(h.get("pred_cpu", h.get("predicted_cpu", 0)))) \
+                .field("predicted_memory", float(h.get("pred_memory", h.get("predicted_memory", 0)))) \
+                .field("predicted_disk_io", float(h.get("pred_disk_io", h.get("predicted_disk_io", 0)))) \
+                .field("predicted_network_sent", float(h.get("pred_network_sent", 0))) \
+                .field("predicted_network_recv", float(h.get("pred_network_recv", 0))) \
                 .field("ecod_score", float(h.get("ecod_score", 0))) \
                 .field("rule_score", float(h.get("rule_score", 0))) \
                 .field("final_score", float(h.get("final_score", 0))) \
