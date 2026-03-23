@@ -436,7 +436,7 @@ function FeatureBreakdown({ worst, horizons }: { worst: HorizonData; horizons: H
                 position: 'relative',
               }}>
                 <div
-                  className="pulse-bar-shimmer"
+                  className="pulse-bar-shimmer pulse-bar-fill-h"
                   style={{
                     height: '100%',
                     width: `${Math.max(fc.pct, 8)}%`,
@@ -567,7 +567,7 @@ function MetricTrendCard({ trends, horizons }: { trends: MetricTrend[]; horizons
                           display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', overflow: 'hidden',
                         }}>
                           <div
-                            className="pulse-bar-shimmer"
+                            className="pulse-bar-shimmer pulse-bar-fill-v"
                             style={{
                               width: '100%', height: `${Math.max(pct, 5)}%`,
                               background: `linear-gradient(180deg, ${barColor} 0%, ${barColor}88 100%)`,
@@ -650,7 +650,7 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
                 {/* 이상 점수 미니 바 */}
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div style={{ flex: 1, height: 6, backgroundColor: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
-                    <div className="pulse-bar-shimmer" style={{
+                    <div className="pulse-bar-shimmer pulse-bar-fill-h" style={{
                       height: '100%', width: `${Math.min(h.ecod_score * 100, 100)}%`,
                       background: 'linear-gradient(90deg, #7c3aed, #c084fc)',
                       borderRadius: 3,
@@ -666,7 +666,7 @@ function RiskCalculationCard({ horizons }: { horizons: HorizonData[] }) {
                 {/* 신뢰도 미니 바 */}
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div style={{ flex: 1, height: 6, backgroundColor: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
-                    <div className="pulse-bar-shimmer" style={{
+                    <div className="pulse-bar-shimmer pulse-bar-fill-h" style={{
                       height: '100%', width: `${Math.min(relPct, 100)}%`,
                       background: `linear-gradient(90deg, ${relPct >= 70 ? '#16a34a' : '#d97706'}, ${relPct >= 70 ? '#4ade80' : '#fbbf24'})`,
                       borderRadius: 3,
