@@ -25,8 +25,9 @@ export function AccuracyDashboardImproved() {
       };
     }
 
-    const timestamps = currentData.records.map(r => new Date(r.timestamp).toLocaleTimeString());
-    const rawErrors = currentData.records.map(r => parseFloat(r.error_pct.toFixed(2)));
+    const filteredRecords = currentData.records.filter(r => r.error_pct != null);
+    const timestamps = filteredRecords.map(r => new Date(r.timestamp).toLocaleTimeString());
+    const rawErrors = filteredRecords.map(r => parseFloat(r.error_pct.toFixed(2)));
 
     // 이상치 제거: 상위 5% 오차 제외 (보통 매우 큰 값들)
     const sortedErrors = [...rawErrors].sort((a, b) => a - b);
@@ -90,7 +91,7 @@ export function AccuracyDashboardImproved() {
 
   const stats = useMemo(() => {
     if (!currentData?.records?.length) return { avg: '-', max: '-', min: '-', latest: '-', confidence: '0', count: '0', outliers: '0' };
-    const rawErrors = currentData.records.map(r => parseFloat(r.error_pct.toFixed(2)));
+    const rawErrors = currentData.records.map(r => parseFloat((r.error_pct ?? 0).toFixed(2)));
 
     // 이상치 제거: 상위 5% 제외
     const sortedErrors = [...rawErrors].sort((a, b) => a - b);
