@@ -127,7 +127,21 @@ export function Dashboard() {
   const allDetections = filteredDetections.slice(-50).reverse();
   const ecodWarnings = ecodData.filter(d => d.severity === 'warning' || d.severity === 'critical');
   const arimaWarnings = arimaData.filter(d => d.severity === 'warning' || d.severity === 'critical');
-  const arimaWarnMetrics = [...new Set(arimaWarnings.map(d => d.metric))];
+
+  // ECOD 경고 요약: 이진(주변장치) vs 연속(시스템) 분리
+  const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
+  const ecodBinaryWarns = [...new Set(ecodWarnings.filter(d => BINARY_METRICS.has(d.metric)).map(d => d.metric))];
+  const ecodSystemWarns = ecodWarnings.filter(d => !BINARY_METRICS.has(d.metric) && d.metric !== 'Multivariate');
+  const ecodSystemSummary = [...new Set(ecodSystemWarns.map(d => d.metric))].map(m => {
+    const latest = ecodSystemWarns.filter(d => d.metric === m).slice(-1)[0];
+    return latest ? `${m} ${latest.details?.match(/[\d.]+%|[\d.]+bytes/)?.[0] || `score ${latest.score?.toFixed(2)}`}` : m;
+  });
+  const ecodSummary = (() => {
+    const parts: string[] = [];
+    if (ecodSystemSummary.length > 0) parts.push(`시스템: ${ecodSystemSummary.join(', ')}`);
+    if (ecodBinaryWarns.length > 0) parts.push(`장치 꺼짐/비정상: ${ecodBinaryWarns.length}개 (${ecodBinaryWarns.slice(0, 3).join(', ')}${ecodBinaryWarns.length > 3 ? ' 등' : ''})`);
+    return parts.length > 0 ? parts.join(' | ') : '';
+  })();
   const metricsCount = dbMetrics.length;
   const healthScore = dbHealthScore;
   const isConnected = dbConnected;
@@ -305,13 +319,17 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`CPU·메모리·디스크IO·네트워크 등 개별 지표 ${metricsCount}건 (5개 메트릭 × ${Math.round(metricsCount / 5)}회 수신)`} />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`${metricsCount}개 시점의 연속값 (CPU·메모리·디스크IO·네트워크송수신) — 주변장치 상태는 탐지 엔진에서 별도 처리`} />
         <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => setHistoryEngine('ecod')}
-          desc={ecodWarnings.length > 0 ? `경고 메트릭: ${[...new Set(ecodWarnings.map(d => d.metric))].join(', ')}` : '14개 지표를 동시 분석하여 정상 범위를 벗어난 항목 수'} />
+          desc={ecodWarnings.length > 0
+            ? `최근 ${ecodData.length}건 중 ${ecodWarnings.length}건 경고 — ${ecodSummary} (클릭→히스토리 필터)`
+            : `최근 ${ecodData.length}건 분석 — 이상 없음`} />
         <StatCard title="ARIMA 예측 경고" value={arimaWarnings.length} color="#8b5cf6" icon={<TrendingUp size={14} />} onClick={() => setHistoryEngine('arima')}
-          desc={arimaWarnings.length > 0 ? `경고 메트릭: ${arimaWarnMetrics.join(', ')}` : '과거 패턴 기반 예측값과 실제값 비교 — 경고 없음'} />
+          desc={arimaWarnings.length > 0
+            ? `최근 ${arimaData.length}건 중 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')} (클릭→히스토리 필터)`
+            : `최근 ${arimaData.length}건 — 경고 없음`} />
         <StatCard title="주변장치 이상" value={peripheralAlerts.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => setHistoryEngine('peripheral')}
-          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')}` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
+          desc={peripheralAlerts.length > 0 ? `이상 장치: ${[...new Set(peripheralAlerts.map(d => d.metric))].join(', ')} (클릭→히스토리 필터)` : '평소 연결된 장비(동글·스캐너·키보드 등)가 꺼지거나 분리된 감지 건수'} />
       </div>
 
       {/* Charts Row 1 */}
@@ -348,6 +366,21 @@ export function Dashboard() {
           ))}
         </div>
         <ReactECharts option={arimaChartOption} style={{ height: '500px' }} />
+        {arimaWarnings.length > 0 && (
+          <div style={{ marginTop: '8px', padding: '10px 14px', backgroundColor: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: '6px', fontSize: '12px' }}>
+            <div style={{ color: '#a78bfa', fontWeight: 600, marginBottom: '4px' }}>ARIMA 경고 {arimaWarnings.length}건</div>
+            {arimaWarnings.slice(0, 5).map((d, i) => (
+              <div key={i} style={{ color: '#c4b5fd', lineHeight: '1.6' }}>
+                <span style={{ color: '#e2e8f0', fontWeight: 500 }}>{d.metric}</span>
+                {' — '}
+                <span>{d.details || `score ${d.score?.toFixed(3)}, 임계값 ${d.threshold?.toFixed(3)}`}</span>
+                <span style={{ color: '#64748b', marginLeft: '8px' }}>
+                  {d.timestamp ? new Date(d.timestamp).toLocaleTimeString('ko-KR') : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Detection Table */}
