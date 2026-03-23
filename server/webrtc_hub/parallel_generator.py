@@ -28,7 +28,7 @@ from .detector import (
     ECOD_WEIGHT, ARIMA_WEIGHT,
 )
 from . import influx_writer
-from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation, write_peripheral_status, DEVICE_NAME_MAP, get_last_metric_time
+from .influx_writer import init_influx, close_influx, write_metrics, write_forecast, write_forecast_evaluation, write_peripheral_status, write_detection, DEVICE_NAME_MAP, get_last_metric_time
 from .predict_tracker import PredictTracker
 from .forecast_evaluator import ForecastEvaluator
 
@@ -448,7 +448,21 @@ async def _write_to_bucket(dp, result, bucket, aid, ts_val, tracker, fe, forecas
             log.warning(f"Peripheral write error ({bucket}): {e}")
 
     if result:
+        # Write all detections (ECOD, ARIMA, peripheral, ensemble)
         for det in result.detections:
+            try:
+                await write_detection(
+                    agent_id=aid, timestamp=ts_val,
+                    engine=det.engine, metric=det.metric,
+                    value=det.value, score=det.score,
+                    threshold=det.threshold, severity=det.severity,
+                    confidence=det.confidence,
+                    forecast=det.forecast, residual=det.residual,
+                    details=det.details, bucket=bucket,
+                )
+            except Exception:
+                pass
+
             if det.engine == "arima" and det.forecast_horizon:
                 for fh in det.forecast_horizon:
                     try:

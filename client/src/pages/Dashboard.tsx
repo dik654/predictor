@@ -40,8 +40,11 @@ const METRIC_KO: Record<string, string> = {
 
 const DATA_LIMIT = 100; // 메트릭·탐지 공통 조회 건수 (시점 기준)
 
+const DB_REPLAY_BATCH = 1000;   // DB에서 한 번에 가져올 시점 수
+const DB_REPLAY_INTERVAL = 500; // 재생 간격 (ms)
+
 const MODE_CONFIG = {
-  db:       { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT, pollInterval: 5_000 },
+  db:       { metricsLimit: DB_REPLAY_BATCH, detectionsLimit: DB_REPLAY_BATCH, pollInterval: 5_000 },
   realtime: { metricsLimit: DATA_LIMIT, detectionsLimit: DATA_LIMIT, pollInterval: 2_000 },
 } as const;
 
@@ -63,6 +66,12 @@ export function Dashboard() {
   const [dbConnected, setDbConnected] = useState(false);
   const prevMetricsLen = useRef(0);
   const prevDetectionsLen = useRef(0);
+
+  // DB 재생 모드 상태
+  const replayMetricsAll = useRef<InfluxMetric[]>([]);
+  const replayDetectionsAll = useRef<InfluxDetection[]>([]);
+  const replayIdx = useRef(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
 
   const fetchMetrics = useCallback(async (limit: number) => {
     try {
@@ -99,10 +108,91 @@ export function Dashboard() {
     } catch { /* ignore */ }
   }, [serverUrl]);
 
-  // 모드에 따라 폴링 설정
+  // DB 재생: 전체 데이터를 한 번에 가져와서 시점별로 하나씩 추가
   useEffect(() => {
-    const cfg = MODE_CONFIG[viewMode];
-    // 모드 전환 시 이전 데이터 초기화
+    if (viewMode !== 'db') return;
+
+    prevMetricsLen.current = 0;
+    prevDetectionsLen.current = 0;
+    replayIdx.current = 0;
+    setDbMetrics([]);
+    setDbDetections([]);
+    setReplayPlaying(true);
+
+    let cancelled = false;
+
+    (async () => {
+      // 전체 데이터 한 번에 로드
+      try {
+        const [mResp, dResp] = await Promise.all([
+          fetch(`${serverUrl}/api/recent-metrics?agent_id=V135-POS-03&limit=${DB_REPLAY_BATCH}`),
+          fetch(`${serverUrl}/api/recent-detections?agent_id=V135-POS-03&limit=${DB_REPLAY_BATCH}`),
+        ]);
+        if (cancelled) return;
+        const mData = mResp.ok ? await mResp.json() : { metrics: [] };
+        const dData = dResp.ok ? await dResp.json() : { detections: [] };
+        replayMetricsAll.current = mData.metrics || [];
+        replayDetectionsAll.current = dData.detections || [];
+        setDbConnected(replayMetricsAll.current.length > 0);
+
+        if (replayMetricsAll.current.length === 0) {
+          setReplayPlaying(false);
+          return;
+        }
+
+        // 시점(timestamp) 목록 추출 (메트릭 기준)
+        const timeSlots = replayMetricsAll.current.map(m => m.timestamp);
+
+        // 재생 루프: 시점별로 DATA_LIMIT개씩 윈도우를 밀며 추가
+        const step = () => {
+          if (cancelled) return;
+          let idx = replayIdx.current;
+          if (idx >= timeSlots.length) {
+            idx = 0; // 처음부터 다시 재생
+            replayIdx.current = 0;
+          }
+
+          // 처음 DATA_LIMIT개까지는 윈도우 확장, 이후에는 슬라이딩
+          const windowEnd = idx + 1;
+          const windowStart = Math.max(0, windowEnd - DATA_LIMIT);
+          setDbMetrics(replayMetricsAll.current.slice(windowStart, windowEnd));
+
+          // Detection: 해당 시점 범위의 데이터 필터
+          const startTs = replayMetricsAll.current[windowStart].timestamp;
+          const endTs = replayMetricsAll.current[windowEnd - 1].timestamp;
+          setDbDetections(replayDetectionsAll.current.filter(d =>
+            d.timestamp >= startTs && d.timestamp <= endTs
+          ));
+
+          // Health score 계산
+          const recentDets = replayDetectionsAll.current.filter(d =>
+            d.timestamp >= startTs && d.timestamp <= endTs
+          ).slice(-20);
+          let score = 100;
+          for (const d of recentDets) {
+            if (d.severity === 'critical') score -= Math.round(20 * d.confidence);
+            else if (d.severity === 'warning') score -= Math.round(10 * d.confidence);
+          }
+          setDbHealthScore(Math.max(0, Math.min(100, score)));
+
+          replayIdx.current = idx + 1;
+          setTimeout(step, DB_REPLAY_INTERVAL);
+        };
+
+        step();
+      } catch {
+        setDbConnected(false);
+        setReplayPlaying(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [viewMode, serverUrl]);
+
+  // 실시간 모드: 기존 폴링
+  useEffect(() => {
+    if (viewMode !== 'realtime') return;
+    const cfg = MODE_CONFIG.realtime;
     prevMetricsLen.current = 0;
     prevDetectionsLen.current = 0;
 

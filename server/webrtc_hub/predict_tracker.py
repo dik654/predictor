@@ -120,9 +120,8 @@ class PredictTracker:
 
                     # Allow 5 minute tolerance for matching (sample data can have timing variance)
                     if time_diff <= 300:
-                        error_pct = abs(
-                            (actual_value - forecast.predicted_value) / actual_value * 100
-                        ) if actual_value != 0 else 0
+                        _scale = {"CPU": 10, "Memory": 10, "DiskIO": 1, "NetworkSent": 100, "NetworkRecv": 100}.get(metric, 10)
+                        error_pct = abs(actual_value - forecast.predicted_value) / max(abs(actual_value), _scale) * 100
 
                         forecast.actual_at = current_dt
                         forecast.actual_value = actual_value
@@ -202,9 +201,8 @@ class PredictTracker:
 
                     # Allow 5 minute tolerance for matching (sample data can have timing variance)
                     if time_diff <= 300:
-                        error_pct = abs(
-                            (actual_value - forecast.predicted_value) / actual_value * 100
-                        ) if actual_value != 0 else 0
+                        _scale = {"CPU": 10, "Memory": 10, "DiskIO": 1, "NetworkSent": 100, "NetworkRecv": 100}.get(metric, 10)
+                        error_pct = abs(actual_value - forecast.predicted_value) / max(abs(actual_value), _scale) * 100
 
                         forecast.actual_at = current_dt
                         forecast.actual_value = actual_value

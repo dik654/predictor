@@ -119,7 +119,11 @@ def match_and_calculate(
         if best_match:
             actual_value = best_match[1]
             predicted_value = fc["predicted_value"]
-            error_pct = abs(actual_value - predicted_value) / actual_value * 100 if actual_value != 0 else 0
+            # 오차율: 실제값이 작을 때 폭발 방지 — max(실제값, 기준값)으로 나눔
+            METRIC_SCALE = {"CPU": 10, "Memory": 10, "DiskIO": 1, "NetworkSent": 100, "NetworkRecv": 100}
+            scale = METRIC_SCALE.get(metric_tag, 10)
+            denominator = max(abs(actual_value), scale)
+            error_pct = abs(actual_value - predicted_value) / denominator * 100
 
             results.append({
                 "time": expected_time,  # accuracy record at the actual measurement time
