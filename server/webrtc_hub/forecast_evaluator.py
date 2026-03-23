@@ -396,12 +396,12 @@ class ForecastEvaluator:
         result.data_source = "influxdb" if agent_id in self.last_retrain else "buffer"
         rule_score = self._compute_rule_score(agent_id)
 
-        # 현재 주변장치/프로세스 상태 (미래에도 유지된다고 가정)
-        state = self.event_states.get(agent_id)
-        periph = state.peripherals if state else {}
+        # 예측 평가: 주변장치는 "정상 연결(1)" 가정 — 시스템 메트릭 변화에 집중
+        # 주변장치 이상은 rule_score에서 별도 반영
         from . import influx_writer as iw
-        periph_values = [float(periph.get(pf, -1)) for pf in iw.PERIPHERAL_FIELDS]
-        is_idle = 1.0 if any(periph.get(k, -1) != -1 for k in ["dongle", "hand_scanner", "2d_scanner", "keyboard", "msr"]) else 0.0
+        periph_values = [1.0] * len(iw.PERIPHERAL_FIELDS)  # 모두 연결 가정
+        is_idle = 1.0
+        proc = 1.0
 
         for horizon_min, preds in sorted(forecasts.items()):
             cpu = preds.get("cpu", 0)
@@ -409,7 +409,6 @@ class ForecastEvaluator:
             disk = preds.get("disk_io", 0)
             net_sent = preds.get("network_sent", 0)
             net_recv = preds.get("network_recv", 0)
-            proc = 1.0  # process 상태는 현재 유지 가정
 
             # 14차원 벡터: ARIMA 예측(연속) + 현재 상태(이산) + 유휴 여부
             feature_names = ["CPU", "Memory", "DiskIO", "NetworkSent", "NetworkRecv", "Process",
