@@ -46,8 +46,8 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
     // score 기준으로 판단 — 시스템 메트릭만 (바 표시와 동일 기준)
     const SYSTEM_METRICS = ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv'];
     const sysMetrics = metrics.filter(d => SYSTEM_METRICS.includes(d.metric));
-    const criticalMetrics = sysMetrics.filter(d => d.score >= 0.8);
-    const warningMetrics = sysMetrics.filter(d => d.score >= 0.5 && d.score < 0.8);
+    const criticalMetrics = sysMetrics.filter(d => d.score >= 0.9);
+    const warningMetrics = sysMetrics.filter(d => d.score >= 0.7 && d.score < 0.9);
 
     let status: 'normal' | 'warning' | 'critical' = 'normal';
     let message = '모든 시스템 지표가 정상 범위입니다.';
@@ -190,9 +190,9 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
           {/* Metric breakdown */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {ecodInsights.details.map((d, i) => {
-              const barColor = d.score >= 0.8 ? '#ef4444' : d.score >= 0.5 ? '#f59e0b' : '#22c55e';
-              const labelColor = d.score >= 0.8 ? '#fca5a5' : d.score >= 0.5 ? '#fcd34d' : '#86efac';
-              const labelText = d.score >= 0.8 ? '이상 감지' : d.score >= 0.5 ? '주의 필요' : '정상';
+              const barColor = d.score >= 0.9 ? '#ef4444' : d.score >= 0.7 ? '#f59e0b' : '#22c55e';
+              const labelColor = d.score >= 0.9 ? '#fca5a5' : d.score >= 0.7 ? '#fcd34d' : '#86efac';
+              const labelText = d.score >= 0.9 ? '이상 감지' : d.score >= 0.7 ? '주의 필요' : '정상';
               return (
                 <div key={i} style={{ marginBottom: '2px' }}>
                   <div style={{
