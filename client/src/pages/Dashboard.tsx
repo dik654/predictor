@@ -651,7 +651,7 @@ export function Dashboard() {
       </div>
 
       {/* Peripheral Status Cards */}
-      <PeripheralCards />
+      <PeripheralCards externalDevices={viewMode === 'db' ? periphStatus : undefined} />
 
       {/* Charts Row 2 - ARIMA */}
       <div style={{ ...card, padding: '16px', marginTop: '12px', marginBottom: '12px' }}>

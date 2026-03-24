@@ -42,11 +42,16 @@ function formatSince(since: string | null): string {
   } catch { return ''; }
 }
 
-export function PeripheralCards() {
+interface PeripheralCardsProps {
+  externalDevices?: Record<string, { status: number | null; since?: string | null }>;
+}
+
+export function PeripheralCards({ externalDevices }: PeripheralCardsProps = {}) {
   const serverUrl = `${window.location.protocol}//${window.location.hostname}:8080`;
   const [devices, setDevices] = useState<Record<string, { status: number | null; since: string | null }>>({});
 
   const fetchStatus = useCallback(async () => {
+    if (externalDevices) return; // 외부 데이터 사용 시 fetch 안 함
     try {
       const resp = await fetch(`${serverUrl}/api/peripheral-status?agent_id=V135-POS-03`);
       if (resp.ok) {
@@ -54,13 +59,18 @@ export function PeripheralCards() {
         setDevices(data.devices || {});
       }
     } catch { /* ignore */ }
-  }, [serverUrl]);
+  }, [serverUrl, externalDevices]);
 
   useEffect(() => {
+    if (externalDevices) return;
     fetchStatus();
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [fetchStatus]);
+  }, [fetchStatus, externalDevices]);
+
+  const displayDevices = externalDevices
+    ? Object.fromEntries(Object.entries(externalDevices).map(([k, v]) => [k, { status: v.status, since: v.since || null }]))
+    : devices;
 
   return (
     <div style={{
@@ -79,7 +89,7 @@ export function PeripheralCards() {
         gap: '10px',
       }}>
         {PERIPHERALS.map(device => {
-          const deviceData = devices[device.id];
+          const deviceData = displayDevices[device.id];
           const state = toState(deviceData?.status);
           const cfg = stateConfig[state];
           const sinceText = state === 'disconnected' ? formatSince(deviceData?.since) : '';
