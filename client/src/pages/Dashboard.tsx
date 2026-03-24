@@ -278,6 +278,25 @@ export function Dashboard() {
         }
         setDbHealthScore(Math.max(0, Math.min(100, score)));
 
+        // 주변장치 상태: 현재 윈도우의 ECOD 이진 메트릭에서 추출
+        const PERIPH_FIELDS = ['dongle', 'hand_scanner', '2d_scanner', 'passport_reader', 'phone_charger', 'keyboard', 'msr'];
+        const PERIPH_ECOD_MAP: Record<string, string> = {
+          'Dongle': 'dongle', 'HandScanner': 'hand_scanner', '2DScanner': '2d_scanner',
+          'PassportReader': 'passport_reader', 'PhoneCharger': 'phone_charger', 'Keyboard': 'keyboard', 'MSR': 'msr',
+        };
+        const windowDets = replayDetectionsAll.current.filter(d =>
+          d.timestamp >= startTs && d.timestamp <= endTs && d.engine === 'ecod'
+        );
+        const latestPeriph: Record<string, { status: number | null }> = {};
+        for (const pf of PERIPH_FIELDS) latestPeriph[pf] = { status: null };
+        for (const d of windowDets) {
+          const pf = PERIPH_ECOD_MAP[d.metric];
+          if (pf && d.actual_value != null) {
+            latestPeriph[pf] = { status: d.actual_value };
+          }
+        }
+        setPeriphStatus(latestPeriph);
+
         replayIdx.current = idx + 1;
 
         const remaining = totalLen - idx;
@@ -351,9 +370,9 @@ export function Dashboard() {
     : dbDetections.filter(d => d.engine === historyEngine);
   const allDetections = filteredDetections.slice(-50).reverse();
   const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
-  // ECOD 경고: 시스템 메트릭만, score ≥ 0.7 (시스템 상태 분석과 동일 기준)
+  // ECOD 이상탐지: 시스템 메트릭만, score ≥ 0.9 (이상 감지만, 주의 필요 제외)
   const ecodWarnings = ecodData.filter(d =>
-    d.score >= 0.7 && !BINARY_METRICS.has(d.metric)
+    d.score >= 0.9 && !BINARY_METRICS.has(d.metric)
   );
   // ARIMA 경고: 메트릭별 최신 임계값 기준으로 클라이언트에서 재판정
   const arimaWarnings = (() => {
