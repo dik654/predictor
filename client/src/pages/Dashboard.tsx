@@ -362,6 +362,8 @@ export function Dashboard() {
   const peripheralWarnDevices = Object.entries(periphStatus)
     .filter(([_, v]) => v.status === 0)
     .map(([k]) => k);
+  const allPeriphUnused = Object.keys(periphStatus).length > 0 &&
+    Object.values(periphStatus).every(v => v.status === -1 || v.status === null);
   const selectedArimaData = arimaData.filter(d => d.metric === arimaMetric).slice(-CHART_POINTS);
   const arimaMetrics = [...new Set(arimaData.map(d => d.metric))];
   const latestDetections = dbDetections.slice(-30);
@@ -619,7 +621,11 @@ export function Dashboard() {
             ? `동일 ${DATA_LIMIT}개 시점 기준 ${arimaWarnings.length}건 — ${arimaWarnings.map(d => `${METRIC_KO[d.metric] || d.metric}: ${d.details || `score ${d.score?.toFixed(2)}`}`).slice(0, 3).join('; ')}`
             : `동일 ${DATA_LIMIT}개 시점 기준 — 경고 없음`} />
         <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
-          desc={peripheralWarnDevices.length > 0 ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외` : '최신 상태 기준 — 7개 장치 모두 연결\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외'} />
+          desc={allPeriphUnused
+            ? 'POS 프로그램 활성화 상태\n(POS 사용 중에는 주변장치 데이터 전송X)\n※ 미사용(-1)은 POS가 점검을 수행하지 않는 상태'
+            : peripheralWarnDevices.length > 0
+              ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외`
+              : '최신 상태 기준 — 7개 장치 모두 연결\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외'} />
       </div>
 
       {/* Charts Row 1 */}
