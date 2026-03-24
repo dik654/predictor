@@ -351,9 +351,9 @@ export function Dashboard() {
     : dbDetections.filter(d => d.engine === historyEngine);
   const allDetections = filteredDetections.slice(-50).reverse();
   const BINARY_METRICS = new Set(['Dongle', 'HandScanner', '2DScanner', 'PassportReader', 'PhoneCharger', 'Keyboard', 'MSR', 'Process', 'POS_Idle']);
-  // ECOD 경고: 시스템 메트릭만 (주변장치는 별도 카드에서 표시)
+  // ECOD 경고: 시스템 메트릭만, score ≥ 0.7 (시스템 상태 분석과 동일 기준)
   const ecodWarnings = ecodData.filter(d =>
-    (d.severity === 'warning' || d.severity === 'critical') && !BINARY_METRICS.has(d.metric)
+    d.score >= 0.7 && !BINARY_METRICS.has(d.metric)
   );
   // ARIMA 경고: 메트릭별 최신 임계값 기준으로 클라이언트에서 재판정
   const arimaWarnings = (() => {
@@ -590,7 +590,7 @@ export function Dashboard() {
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
-        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`최근 ${DATA_LIMIT}개 시점 조회 기준\n(CPU·메모리·디스크IO·네트워크)\n주변장치는 POS 유휴 상태에서만 수집`} />
+        <StatCard title="최근 메트릭 수신" value={metricsCount} color="#3b82f6" icon={<Database size={14} />} desc={`최근 ${DATA_LIMIT}개 시점 슬라이딩 윈도우\n(CPU·메모리·디스크IO·네트워크)\n주변장치는 POS 유휴 상태에서만 수집`} />
         <StatCard title="ECOD 이상탐지" value={ecodWarnings.length} color="#f43f5e" icon={<Search size={14} />} onClick={() => scrollToHistory('ecod')}
           desc={ecodWarnings.length > 0
             ? `동일 ${DATA_LIMIT}개 시점 기준 ${ecodWarnings.length}건 경고 — ${ecodSummary}`
