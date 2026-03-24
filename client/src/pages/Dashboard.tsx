@@ -70,7 +70,20 @@ export function Dashboard() {
   const [dbConnected, setDbConnected] = useState(false);
   const prevMetricsLen = useRef(0);
   const prevDetectionsLen = useRef(0);
-  const [periphStatus, setPeriphStatus] = useState<Record<string, { status: number | null }>>({});
+  const [periphStatus, setPeriphStatusRaw] = useState<Record<string, { status: number | null }>>({});
+  const lastKnownPeriph = useRef<Record<string, { status: number | null }>>({});
+
+  // 실제 점검 상태(not all -1)를 기억하고, 전부 -1이면 마지막 상태 유지
+  const setPeriphStatus = (data: Record<string, { status: number | null }>) => {
+    const allUnused = Object.keys(data).length > 0 &&
+      Object.values(data).every(v => v.status === -1 || v.status === null);
+    if (!allUnused) {
+      lastKnownPeriph.current = data;
+    }
+    setPeriphStatusRaw(allUnused && Object.keys(lastKnownPeriph.current).length > 0
+      ? lastKnownPeriph.current
+      : data);
+  };
 
   // 주변장치 상태 조회 (peripheral_status 측정값 직접)
   const fetchPeriphStatus = useCallback(async () => {
@@ -622,7 +635,7 @@ export function Dashboard() {
             : `동일 ${DATA_LIMIT}개 시점 기준 — 경고 없음`} />
         <StatCard title="주변장치 꺼짐" value={peripheralWarnDevices.length} color="#f59e0b" icon={<AlertTriangle size={14} />} onClick={() => scrollToHistory('peripheral')}
           desc={allPeriphUnused
-            ? 'POS 프로그램 활성화 상태\n(POS 사용 중에는 주변장치 데이터 전송X)\n※ 미사용(-1)은 POS가 점검을 수행하지 않는 상태'
+            ? '현재 POS 프로그램 활성화 중\n(POS 사용 중에는 주변장치 데이터 전송X)\n※ 미사용(-1)은 POS가 점검을 수행하지 않는 상태'
             : peripheralWarnDevices.length > 0
               ? `최신 상태 기준 — 꺼짐: ${peripheralWarnDevices.map(d => METRIC_KO[d] || d).join(', ')} (7개 중 ${peripheralWarnDevices.length}개)\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외`
               : '최신 상태 기준 — 7개 장치 모두 연결\n※ 미사용 장치(-1)는 원래 사용하지 않는 장치로 제외'} />
