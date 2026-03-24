@@ -43,9 +43,11 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
       };
     }
     
-    // score 기준으로 판단 (바 표시와 동일 기준)
-    const criticalMetrics = metrics.filter(d => d.score >= 0.8);
-    const warningMetrics = metrics.filter(d => d.score >= 0.5 && d.score < 0.8);
+    // score 기준으로 판단 — 시스템 메트릭만 (바 표시와 동일 기준)
+    const SYSTEM_METRICS = ['CPU', 'Memory', 'DiskIO', 'NetworkSent', 'NetworkRecv'];
+    const sysMetrics = metrics.filter(d => SYSTEM_METRICS.includes(d.metric));
+    const criticalMetrics = sysMetrics.filter(d => d.score >= 0.8);
+    const warningMetrics = sysMetrics.filter(d => d.score >= 0.5 && d.score < 0.8);
 
     let status: 'normal' | 'warning' | 'critical' = 'normal';
     let message = '모든 시스템 지표가 정상 범위입니다.';
