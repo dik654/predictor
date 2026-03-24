@@ -43,20 +43,21 @@ export function StatusInsightCard({ detections, healthScore }: Props) {
       };
     }
     
-    const warnings = metrics.filter(d => d.severity === 'warning' || d.severity === 'critical');
-    
+    // score 기준으로 판단 (바 표시와 동일 기준)
+    const criticalMetrics = metrics.filter(d => d.score >= 0.8);
+    const warningMetrics = metrics.filter(d => d.score >= 0.5 && d.score < 0.8);
+
     let status: 'normal' | 'warning' | 'critical' = 'normal';
     let message = '모든 시스템 지표가 정상 범위입니다.';
-    
-    if (multivariate.severity === 'critical') {
+
+    if (criticalMetrics.length > 0 || multivariate.severity === 'critical') {
       status = 'critical';
-      message = '시스템 전반에 심각한 이상이 감지되었습니다!';
-    } else if (multivariate.severity === 'warning' || warnings.length > 0) {
+      const names = criticalMetrics.map(w => w.metric).join(', ');
+      message = `${names || '복합 지표'}에서 이상이 감지되었습니다!`;
+    } else if (warningMetrics.length > 0 || multivariate.severity === 'warning') {
       status = 'warning';
-      const warningMetrics = warnings.map(w => w.metric).join(', ');
-      message = warningMetrics 
-        ? `${warningMetrics} 지표에서 이상 징후가 감지되었습니다.`
-        : '일부 지표에서 이상 징후가 감지되었습니다.';
+      const names = warningMetrics.map(w => w.metric).join(', ');
+      message = `${names || '일부 지표'}에서 주의가 필요합니다.`;
     }
     
     return {
