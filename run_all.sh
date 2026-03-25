@@ -434,7 +434,7 @@ do_start() {
         local client_pid=$!
         save_pid "client" "$client_pid"
         echo -e "  PID=${client_pid} | Log: ${client_log}"
-        echo -e "  URL: ${CYAN}http://localhost:5173${NC}"
+        echo -e "  URL: ${CYAN}http://localhost:6174${NC}"
         echo ""
     else
         echo -e "${YELLOW}[3/4] React Client — skipped${NC}"
@@ -505,7 +505,7 @@ do_start() {
 
     echo -e "${CYAN}============================================${NC}"
     echo -e "  Server : ${GREEN}http://${HOST_IP}:${SERVER_PORT}${NC}"
-    $RUN_CLIENT && echo -e "  Client : ${BLUE}http://${HOST_IP}:5173${NC}"
+    $RUN_CLIENT && echo -e "  Client : ${BLUE}http://${HOST_IP}:6174${NC}"
     $RUN_INFLUX && echo -e "  Influx : ${MAGENTA}http://${HOST_IP}:8086${NC}"
     echo -e "  Logs   : ${LOG_DIR}/"
     echo -e "${CYAN}============================================${NC}"
