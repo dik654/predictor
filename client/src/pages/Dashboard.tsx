@@ -723,8 +723,9 @@ export function Dashboard() {
         <div style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.8', marginBottom: '10px', padding: '10px 12px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #1e293b' }}>
           <div><b style={{ color: '#94a3b8' }}>Score</b> — 과거 학습 데이터에서 현재 값이 얼마나 극단적인지 (0.0=평범, 1.0=매우 이례적)</div>
           <div style={{ paddingLeft: '12px', color: '#525e6f' }}>예) 메모리 Score 0.47 → 학습 기간 중 47%보다 높은 수준 (평범)</div>
-          <div><b style={{ color: '#94a3b8' }}>신뢰도</b> — 판단 근거가 되는 학습 데이터의 양 (많을수록 신뢰↑)</div>
-          <div style={{ paddingLeft: '12px', color: '#525e6f' }}>20건 미만: 40% · 20~60건: 70% · 60건 이상: 90%</div>
+          <div><b style={{ color: '#94a3b8' }}>신뢰도</b></div>
+          <div style={{ paddingLeft: '12px', color: '#525e6f' }}>ECOD: 학습 데이터 양 기반 (20건 미만 40%, 20~60건 70%, 60건+ 90%) — 모델 신뢰도</div>
+          <div style={{ paddingLeft: '12px', color: '#525e6f' }}>ARIMA: 1 - Score — 예측이 맞을수록 높음 (이번 예측의 정확도)</div>
           <div><b style={{ color: '#94a3b8' }}>심각도</b> — normal: 정상 범위 · warning: 주의 (CPU≥80%, 메모리≥85%, 또는 Score≥0.95) · critical: 위험 (CPU≥90%, 메모리≥95%)</div>
         </div>
         )}
